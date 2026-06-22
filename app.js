@@ -543,9 +543,25 @@
     </div>`;
   }
 
-  function orderLines(o) {
-    return `<div style="margin-top:10px">${o.items.map(i => `<div class="row small"><span>${esc(i.name)} x ${i.qty}</span><span>${money(i.price * i.qty)}</span></div>`).join("")}${o.addons.map(a => `<div class="row small"><span>${esc(a.name)}</span><span>${money(a.price)}</span></div>`).join("")}</div>`;
-  }
+ function orderLines(o) {
+  return `
+    <div style="margin-top:10px">
+      ${(o.items || []).map(i => `
+        <div class="row small">
+          <span>${esc(i.name)} x ${i.qty}</span>
+          <span>${money(i.price * i.qty)}</span>
+        </div>
+      `).join("")}
+
+      ${(o.addons || []).map(a => `
+        <div class="row small">
+          <span>${esc(a.name)}</span>
+          <span>${money(a.price)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
 
   function bindClicks(e) {
     const el = e.target.closest("[data-action]");

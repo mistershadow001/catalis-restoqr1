@@ -107,6 +107,7 @@
       r.paymentQr = r.paymentQr || DEFAULT_QR;
       r.googleReviewUrl = r.googleReviewUrl || "";
       r.upiName = r.upiName || r.owner || r.name;
+      r.upiId = r.upiId || "";
       r.tables = r.tables || [];
       r.menu = r.menu || [];
       r.addons = r.addons || [];
@@ -447,6 +448,7 @@
           ${field("Owner Name", "set-owner", "input", r.owner)}
           ${field("Phone", "set-phone", "input", r.phone)}
           ${field("UPI Display Name", "set-upi", "input", r.upiName || r.owner)}
+          ${field("UPI ID (VPA)", "set-upiid", "input", r.upiId || "")}
           ${field("Google Review Link", "set-review", "input", r.googleReviewUrl || "")}
         </div>
         ${field("Payment QR Image URL", "set-qr", "input", r.paymentQr || DEFAULT_QR)}
@@ -492,18 +494,51 @@
   }
 
   function checkoutBox(r, total) {
-    return `<div class="cart-bar">
-      <div class="grid-2">
-        <div class="qr-box"><img src="${r.paymentQr || DEFAULT_QR}" alt="Payment QR"><p class="small">${esc(r.upiName || r.owner)}</p></div>
-        <div>
-          <p class="muted small">Scan restaurant owner QR, pay ${money(total)}, then place order. Counter will verify and mark payment as paid.</p>
-          ${r.addons.filter(a => a.active).map(a => `<label class="row" style="justify-content:flex-start;margin:7px 0"><input type="checkbox" data-addon="${a.id}"> <span>${esc(a.name)} · ${money(a.price)}</span></label>`).join("")}
-          <textarea id="order-note" placeholder="Special instructions"></textarea>
-          <button class="btn primary block" data-action="place-order" data-slug="${r.slug}">I Paid · Place Order · ${money(total)}</button>
-        </div>
-      </div>
-    </div>`;
-  }
+  const pa = encodeURIComponent(r.upiId || "");
+  const pn = encodeURIComponent(r.upiName || r.name);
+
+  return `<div class="cart-bar">
+
+    <div class="cart-summary">
+      ${Object.entries(cart).map(([id, qty]) => {
+        const m = find(r.menu, id);
+        return m ? `<div class="cart-row"><span>${esc(m.name)} × ${qty}</span><span>${money(m.price * qty)}</span></div>` : "";
+      }).join("")}
+      <div class="cart-row cart-total"><span>Total</span><strong>${money(total)}</strong></div>
+    </div>
+
+    ${r.addons.filter(a => a.active).length ? `
+      <div class="addon-block">
+        <p class="muted small">Add extras?</p>
+        ${r.addons.filter(a => a.active).map(a => `
+          <label class="addon-row">
+            <input type="checkbox" data-addon="${a.id}">
+            <span>${esc(a.name)} · ${money(a.price)}</span>
+          </label>`).join("")}
+      </div>` : ""}
+
+    <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 10px"></textarea>
+
+    ${r.upiId ? `
+      <p class="muted small" style="margin-bottom:8px">Pay ${money(total)} via</p>
+      <div class="upi-apps">
+        <a href="phonepe://pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR" class="upi-app-btn phonepe">
+          🟣 PhonePe
+        </a>
+        <a href="tez://upi/pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR" class="upi-app-btn gpay">
+          🔵 GPay
+        </a>
+      </div>` : `
+      <p class="muted small" style="margin-bottom:10px">
+        Pay <strong>${money(total)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong> via PhonePe or GPay, then tap below.
+      </p>`}
+
+    <button class="btn primary block" data-action="place-order" data-slug="${r.slug}">
+      ✓ I Paid · Confirm Order
+    </button>
+
+  </div>`;
+}
 
   function customerStatusCard(r, o) {
     const delivered = o.status === "completed";
@@ -674,6 +709,7 @@
       r.owner = val("set-owner") || r.owner;
       r.phone = val("set-phone") || r.phone;
       r.upiName = val("set-upi") || r.upiName;
+      r.upiId = val("set-upiid");
       r.googleReviewUrl = val("set-review") || "";
       r.paymentQr = val("set-qr") || DEFAULT_QR;
     });

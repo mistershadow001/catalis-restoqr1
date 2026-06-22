@@ -289,3 +289,27 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   .card { box-shadow: none; }
   .print-only { display: block; }
 }
+
+.cart-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  max-width: 480px;
+  margin: 0 auto;
+  background: var(--card, #fff);
+  border-top: 1px solid var(--line, #e5e5e5);
+  padding: 12px 14px 20px;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.10);
+  max-height: 72vh;
+  overflow-y: auto;
+  z-index: 100;
+}
+.cart-summary { margin-bottom: 8px; }
+.cart-row { display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0; }
+.cart-total { border-top: 1px solid var(--line,#e5e5e5); margin-top: 6px; padding-top: 6px; font-size: 14px; }
+.addon-block { margin-bottom: 8px; }
+.addon-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; cursor: pointer; }
+.upi-apps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.upi-app-btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 11px 8px; border-radius: 9px; font-size: 14px; font-weight: 600; text-decoration: none; color: white; border: none; }
+.upi-app-btn.phonepe { background: #5f259f; }
+.upi-app-btn.gpay    { background: #1a73e8; }
+.customer-shell { padding-bottom: 300px; }

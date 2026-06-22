@@ -41,6 +41,7 @@
           plan: "Monthly",
           subscriptionEnds: now + days(30),
           paymentQr: DEFAULT_QR,
+          upiId: "mayur@upi",
           upiName: "Mr. Mayur Ravindra Jadhav",
           googleReviewUrl: "https://www.google.com/search?q=Catalis+Cafe+Google+review",
           tables: [1, 2, 3, 4, 5, 6].map(n => ({ no: n, seats: n === 6 ? 8 : 4 })),
@@ -467,6 +468,10 @@
     }
     const table = Number(params.get("table")) || "";
     const lastOrder = state.orders.find(o => o.id === localStorage.getItem("restoqr_last_order_" + r.slug));
+    // If there's an active (non-completed) order, show the order tracking view
+    if (lastOrder && lastOrder.status !== "completed") {
+      return customerShell(r.name, customerOrderTrackingView(r, lastOrder));
+    }
     if (!customerCat) customerCat = r.categories[0] || unique(r.menu.map(i => i.category))[0] || "";
     const items = r.menu.filter(i => i.available && i.category === customerCat);
     const total = cartTotal(r);
@@ -477,10 +482,18 @@
           <span class="muted">Table number</span>
           <input class="table-box" id="customer-table" value="${table}" type="number" min="1">
         </div>
-        ${lastOrder ? customerStatusCard(r, lastOrder) : ""}
+        ${lastOrder && lastOrder.status === "completed" ? customerStatusCard(r, lastOrder) : ""}
         <div class="cat-strip">${unique(r.menu.map(i => i.category)).map(c => `<button class="${c === customerCat ? "active" : ""}" data-action="customer-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
-        <div style="padding-bottom:12px">
+        <div style="padding-bottom:${cartCount() ? "0" : "80px"}">
           ${items.map(i => customerItem(r, i)).join("") || empty("No items available")}
+          ${r.addons.filter(a => a.active).length ? `
+            <div style="padding:10px 14px 4px;border-top:1px solid var(--line);margin-top:8px">
+              <p style="font-size:12px;font-weight:600;color:var(--muted,#6b7280);margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
+              ${r.addons.filter(a => a.active).map(a => `
+                <div class="customer-item" style="opacity:.85">
+                  <div><strong>+ ${esc(a.name)}</strong><p class="muted small">${money(a.price)} · Add at checkout</p></div>
+                </div>`).join("")}
+            </div>` : ""}
         </div>
         ${cartCount() ? checkoutBox(r, total) : ""}
       </div>`;
@@ -498,7 +511,7 @@
     const pa = encodeURIComponent(r.upiId || "");
     const pn = encodeURIComponent(r.upiName || r.name);
     const activeAddons = r.addons.filter(a => a.active);
-    // Grand total shown in the bar; addon total is computed at place-order time
+
     return `<div class="cart-bar" style="display:flex;flex-direction:column;max-height:70vh;">
 
       <div class="cart-scrollable" style="overflow-y:auto;flex:1;min-height:0;padding-bottom:4px">
@@ -507,7 +520,7 @@
             const m = find(r.menu, id);
             return m ? `<div class="cart-row"><span>${esc(m.name)} × ${qty}</span><span>${money(m.price * qty)}</span></div>` : "";
           }).join("")}
-          <div class="cart-row cart-total"><span>Items Total</span><strong>${money(total)}</strong></div>
+          <div class="cart-row cart-total"><span>Total</span><strong id="pay-total-display">${money(total)}</strong></div>
         </div>
 
         ${activeAddons.length ? `
@@ -515,35 +528,99 @@
             <p class="muted small">Add extras?</p>
             ${activeAddons.map(a => `
               <label class="addon-row">
-                <input type="checkbox" data-addon="${a.id}">
+                <input type="checkbox" data-action="addon-change" data-addon="${a.id}" data-price="${a.price}" data-base="${total}" data-pa="${r.upiId || ""}" data-pn="${esc(r.upiName || r.name)}" class="addon-chk">
                 <span>${esc(a.name)} · ${money(a.price)}</span>
               </label>`).join("")}
           </div>` : ""}
 
-        <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 4px;box-sizing:border-box"></textarea>
+        <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 8px;box-sizing:border-box"></textarea>
 
-        ${r.upiId ? `
-          <p class="muted small" style="margin-bottom:8px">Pay via</p>
-          <div class="upi-apps">
-            <a href="phonepe://pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR" class="upi-app-btn phonepe">
-              🟣 PhonePe
-            </a>
-            <a href="tez://upi/pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR" class="upi-app-btn gpay">
-              🔵 GPay
-            </a>
-          </div>` : `
-          <p class="muted small" style="margin-bottom:4px">
-            Pay <strong>${money(total)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong> via PhonePe or GPay, then tap below.
-          </p>`}
+        <p class="muted small" style="margin-bottom:8px">
+          Pay <strong id="pay-amount-label">${money(total)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong>
+        </p>
+
+        <div style="display:flex;gap:10px;margin-bottom:4px">
+          <a id="phonepe-btn"
+             href="${r.upiId ? `phonepe://pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR` : `phonepe://`}"
+             style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border-radius:10px;background:#5f259f;color:#fff;font-weight:600;text-decoration:none;font-size:15px">
+            🟣 PhonePe
+          </a>
+          <a id="gpay-btn"
+             href="${r.upiId ? `tez://upi/pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR` : `tez://`}"
+             style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border-radius:10px;background:#1a73e8;color:#fff;font-weight:600;text-decoration:none;font-size:15px">
+            🔵 GPay
+          </a>
+        </div>
+        ${!r.upiId ? `<p style="color:#ef4444;font-size:12px;margin:4px 0">⚠ UPI ID not set — links open app but won't pre-fill amount. Add UPI ID in Settings.</p>` : ""}
+
       </div>
 
-      <div class="cart-confirm" style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">
+      <div style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">
         <button class="btn primary block" data-action="place-order" data-slug="${r.slug}">
           ✓ I Paid · Confirm Order
         </button>
       </div>
 
     </div>`;
+  }
+
+  function customerOrderTrackingView(r, o) {
+    const statusSteps = ["payment_check", "pending", "preparing", "ready", "completed"];
+    const stepLabels  = ["Payment Check", "Confirmed", "Preparing", "Ready", "Delivered"];
+    const currentStep = statusSteps.indexOf(o.status);
+    const statusColor = { payment_check: "#f59e0b", pending: "#3b82f6", preparing: "#8b5cf6", ready: "#10b981", completed: "#10b981" };
+    const color = statusColor[o.status] || "#3b82f6";
+    return `
+      <div style="padding:16px 14px">
+
+        <div style="background:${color}15;border:1.5px solid ${color};border-radius:12px;padding:16px;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div>
+              <p style="margin:0;font-size:12px;color:var(--muted,#6b7280);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Order #${o.id.slice(-5).toUpperCase()}</p>
+              <p style="margin:2px 0 0;font-size:13px;color:var(--muted,#6b7280)">Table ${o.table} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
+            </div>
+            <span style="background:${color};color:#fff;padding:5px 12px;border-radius:20px;font-size:13px;font-weight:600">${stepLabels[Math.max(0, currentStep)] || "Active"}</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:0;margin:12px 0 4px">
+            ${statusSteps.slice(0, -1).map((s, i) => `
+              <div style="flex:1;height:4px;border-radius:2px;background:${i <= currentStep ? color : "#e5e7eb"}"></div>
+              ${i < statusSteps.length - 2 ? `<div style="width:8px;height:8px;border-radius:50%;background:${i < currentStep ? color : i === currentStep ? color : "#e5e7eb"};flex-shrink:0"></div>` : ""}
+            `).join("")}
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px">
+            ${stepLabels.slice(0, -1).map((l, i) => `<span style="font-size:10px;color:${i <= currentStep ? color : "var(--muted,#9ca3af)"};font-weight:${i === currentStep ? "700" : "400"}">${l}</span>`).join("")}
+          </div>
+        </div>
+
+        <div style="background:var(--card,#fff);border:1px solid var(--line,#e5e7eb);border-radius:12px;padding:14px;margin-bottom:14px">
+          <p style="margin:0 0 10px;font-weight:600;font-size:14px">Your Order</p>
+          ${(o.items || []).map(i => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line,#f3f4f6)">
+              <span style="font-size:14px">${esc(i.name)} <span style="color:var(--muted,#6b7280)">× ${i.qty}</span></span>
+              <span style="font-size:14px;font-weight:500">${money(i.price * i.qty)}</span>
+            </div>`).join("")}
+          ${(o.addons || []).length ? `
+            <p style="margin:10px 0 6px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
+            ${o.addons.map(a => `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line,#f3f4f6)">
+                <span style="font-size:14px">+ ${esc(a.name)}</span>
+                <span style="font-size:14px;font-weight:500">${money(a.price)}</span>
+              </div>`).join("")}` : ""}
+          ${o.note ? `<p style="margin:10px 0 0;font-size:13px;color:var(--muted,#6b7280)">📝 ${esc(o.note)}</p>` : ""}
+          <div style="display:flex;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:2px solid var(--line,#e5e7eb)">
+            <span style="font-weight:700">Total</span>
+            <span style="font-weight:700;font-size:16px">${money(o.total)}</span>
+          </div>
+        </div>
+
+        <p style="text-align:center;font-size:13px;color:var(--muted,#6b7280);margin:0 0 16px">
+          ${o.paymentStatus === "waiting" ? "⏳ Waiting for payment verification by counter..." : o.status === "preparing" ? "👨‍🍳 Your food is being prepared!" : o.status === "ready" ? "🛎 Your order is ready! Counter will serve you shortly." : "✅ Payment verified. Order confirmed!"}
+        </p>
+
+        <button class="btn block" style="width:100%;margin-bottom:10px" data-action="refresh-order" data-slug="${r.slug}">↻ Refresh Status</button>
+        <button class="btn block" style="width:100%;color:var(--muted,#6b7280)" data-action="dismiss-review" data-slug="${r.slug}">+ Order More Items</button>
+      </div>`;
   }
 
   function customerStatusCard(r, o) {
@@ -604,6 +681,25 @@
     `;
   }
 
+  function updatePaymentTotal() {
+    const checkboxes = [...document.querySelectorAll('.addon-chk')];
+    if (!checkboxes.length) return;
+    const base = Number(checkboxes[0].dataset.base) || 0;
+    const pa = checkboxes[0].dataset.pa || "";
+    const pn = checkboxes[0].dataset.pn || "";
+    const extra = checkboxes.filter(c => c.checked).reduce((s, c) => s + (Number(c.dataset.price) || 0), 0);
+    const grand = base + extra;
+    const fmt = "₹" + grand.toLocaleString("en-IN");
+    const display = document.getElementById("pay-total-display");
+    const label = document.getElementById("pay-amount-label");
+    const pp = document.getElementById("phonepe-btn");
+    const gp = document.getElementById("gpay-btn");
+    if (display) display.textContent = fmt;
+    if (label) label.textContent = fmt;
+    if (pp) pp.href = pa ? `phonepe://pay?pa=${encodeURIComponent(pa)}&pn=${encodeURIComponent(pn)}&am=${grand}&cu=INR` : "phonepe://";
+    if (gp) gp.href = pa ? `tez://upi/pay?pa=${encodeURIComponent(pa)}&pn=${encodeURIComponent(pn)}&am=${grand}&cu=INR` : "tez://";
+  }
+
   function bindClicks(e) {
     const el = e.target.closest("[data-action]");
     if (!el) return;
@@ -633,7 +729,9 @@
     if (action === "cart-inc") return cart[el.dataset.id] = (cart[el.dataset.id] || 0) + 1, render();
     if (action === "cart-dec") return decCart(el.dataset.id);
     if (action === "place-order") return placeOrder(el.dataset.slug);
+    if (action === "addon-change") return updatePaymentTotal();
     if (action === "dismiss-review") return localStorage.removeItem("restoqr_last_order_" + el.dataset.slug), render();
+    if (action === "refresh-order") return render();
     if (action === "mark-paid") return updateOrder(el.dataset.id, o => { o.paymentStatus = "paid"; o.status = "pending"; });
     if (action === "advance-order") return updateOrder(el.dataset.id, o => o.status = el.dataset.next);
     if (action === "close-order") return updateOrder(el.dataset.id, o => o.status = "completed");
@@ -740,7 +838,10 @@
     }));
     localStorage.setItem("restoqr_last_order_" + slug, orderId);
     cart = {};
-    toast("Order sent. Counter will verify payment.");
+    customerCat = "";
+    toast("Order placed! Waiting for payment verification.");
+    // Re-render stays on the same hash — render() will now show the order status card at top
+    render();
   }
 
   function updateRestaurant(slug, fn) {

@@ -195,6 +195,7 @@
             ${field("Phone", "reg-phone", "input", "Mobile number")}
             ${field("City", "reg-city", "input", "City")}
             ${field("Owner Login PIN", "reg-pin", "input", "4 digit PIN", "password")}
+            ${field("UPI ID (VPA)", "reg-upiid", "input", "name@upi or 9999999999@paytm")}
             ${field("UPI Display Name", "reg-upi", "input", "Shown under payment QR")}
             ${field("Google Review Link", "reg-review", "input", "Paste Google review link")}
           </div>
@@ -346,7 +347,7 @@
       <section class="card" style="margin-top:14px">
         ${r.menu.map(i => `
           <div class="list-item menu-item">
-            <div><strong>${i.veg ? "●" : "●"} ${esc(i.name)}</strong><p class="muted small">${esc(i.category)} · ${money(i.price)} · ${i.available ? "Available" : "Hidden"}</p></div>
+            <div><strong><span style="color:${i.veg ? "var(--ok)" : "var(--bad)"}">●</span> ${esc(i.name)}</strong><p class="muted small">${esc(i.category)} · ${money(i.price)} · ${i.available ? "Available" : "Hidden"}</p></div>
             <div class="row-left">
               <input id="price-${i.id}" type="number" value="${i.price}" aria-label="${esc(i.name)} price" style="width:92px">
               <button class="btn blue" data-action="update-price" data-slug="${r.slug}" data-id="${i.id}">Save</button>
@@ -494,51 +495,56 @@
   }
 
   function checkoutBox(r, total) {
-  const pa = encodeURIComponent(r.upiId || "");
-  const pn = encodeURIComponent(r.upiName || r.name);
+    const pa = encodeURIComponent(r.upiId || "");
+    const pn = encodeURIComponent(r.upiName || r.name);
+    const activeAddons = r.addons.filter(a => a.active);
+    // Grand total shown in the bar; addon total is computed at place-order time
+    return `<div class="cart-bar" style="display:flex;flex-direction:column;max-height:70vh;">
 
-  return `<div class="cart-bar">
+      <div class="cart-scrollable" style="overflow-y:auto;flex:1;min-height:0;padding-bottom:4px">
+        <div class="cart-summary">
+          ${Object.entries(cart).map(([id, qty]) => {
+            const m = find(r.menu, id);
+            return m ? `<div class="cart-row"><span>${esc(m.name)} × ${qty}</span><span>${money(m.price * qty)}</span></div>` : "";
+          }).join("")}
+          <div class="cart-row cart-total"><span>Items Total</span><strong>${money(total)}</strong></div>
+        </div>
 
-    <div class="cart-summary">
-      ${Object.entries(cart).map(([id, qty]) => {
-        const m = find(r.menu, id);
-        return m ? `<div class="cart-row"><span>${esc(m.name)} × ${qty}</span><span>${money(m.price * qty)}</span></div>` : "";
-      }).join("")}
-      <div class="cart-row cart-total"><span>Total</span><strong>${money(total)}</strong></div>
-    </div>
+        ${activeAddons.length ? `
+          <div class="addon-block">
+            <p class="muted small">Add extras?</p>
+            ${activeAddons.map(a => `
+              <label class="addon-row">
+                <input type="checkbox" data-addon="${a.id}">
+                <span>${esc(a.name)} · ${money(a.price)}</span>
+              </label>`).join("")}
+          </div>` : ""}
 
-    ${r.addons.filter(a => a.active).length ? `
-      <div class="addon-block">
-        <p class="muted small">Add extras?</p>
-        ${r.addons.filter(a => a.active).map(a => `
-          <label class="addon-row">
-            <input type="checkbox" data-addon="${a.id}">
-            <span>${esc(a.name)} · ${money(a.price)}</span>
-          </label>`).join("")}
-      </div>` : ""}
+        <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 4px;box-sizing:border-box"></textarea>
 
-    <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 10px"></textarea>
+        ${r.upiId ? `
+          <p class="muted small" style="margin-bottom:8px">Pay via</p>
+          <div class="upi-apps">
+            <a href="phonepe://pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR" class="upi-app-btn phonepe">
+              🟣 PhonePe
+            </a>
+            <a href="tez://upi/pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR" class="upi-app-btn gpay">
+              🔵 GPay
+            </a>
+          </div>` : `
+          <p class="muted small" style="margin-bottom:4px">
+            Pay <strong>${money(total)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong> via PhonePe or GPay, then tap below.
+          </p>`}
+      </div>
 
-    ${r.upiId ? `
-      <p class="muted small" style="margin-bottom:8px">Pay ${money(total)} via</p>
-      <div class="upi-apps">
-        <a href="phonepe://pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR" class="upi-app-btn phonepe">
-          🟣 PhonePe
-        </a>
-        <a href="tez://upi/pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR" class="upi-app-btn gpay">
-          🔵 GPay
-        </a>
-      </div>` : `
-      <p class="muted small" style="margin-bottom:10px">
-        Pay <strong>${money(total)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong> via PhonePe or GPay, then tap below.
-      </p>`}
+      <div class="cart-confirm" style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">
+        <button class="btn primary block" data-action="place-order" data-slug="${r.slug}">
+          ✓ I Paid · Confirm Order
+        </button>
+      </div>
 
-    <button class="btn primary block" data-action="place-order" data-slug="${r.slug}">
-      ✓ I Paid · Confirm Order
-    </button>
-
-  </div>`;
-}
+    </div>`;
+  }
 
   function customerStatusCard(r, o) {
     const delivered = o.status === "completed";
@@ -578,25 +584,25 @@
     </div>`;
   }
 
- function orderLines(o) {
-  return `
-    <div style="margin-top:10px">
-      ${(o.items || []).map(i => `
-        <div class="row small">
-          <span>${esc(i.name)} x ${i.qty}</span>
-          <span>${money(i.price * i.qty)}</span>
-        </div>
-      `).join("")}
+  function orderLines(o) {
+    return `
+      <div style="margin-top:10px">
+        ${(o.items || []).map(i => `
+          <div class="row small">
+            <span>${esc(i.name)} x ${i.qty}</span>
+            <span>${money(i.price * i.qty)}</span>
+          </div>
+        `).join("")}
 
-      ${(o.addons || []).map(a => `
-        <div class="row small">
-          <span>${esc(a.name)}</span>
-          <span>${money(a.price)}</span>
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
+        ${(o.addons || []).map(a => `
+          <div class="row small">
+            <span>${esc(a.name)}</span>
+            <span>${money(a.price)}</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
 
   function bindClicks(e) {
     const el = e.target.closest("[data-action]");
@@ -642,13 +648,13 @@
   }
 
   function registerRestaurant() {
-    const name = val("reg-name"), owner = val("reg-owner"), phone = val("reg-phone"), city = val("reg-city"), pin = val("reg-pin"), upi = val("reg-upi"), review = val("reg-review");
+    const name = val("reg-name"), owner = val("reg-owner"), phone = val("reg-phone"), city = val("reg-city"), pin = val("reg-pin"), upiId = val("reg-upiid"), upi = val("reg-upi"), review = val("reg-review");
     if (!name || !owner || !phone || !pin) return toast("Fill restaurant, owner, phone, and PIN");
     const slug = slugify(name);
     if (bySlug(slug)) return toast("Restaurant name already exists");
     mutate(s => s.restaurants.push({
       id: uid(), slug, name, owner, phone, city, ownerPin: pin, active: false, qrEnabled: false,
-      plan: "Pending", subscriptionEnds: Date.now(), paymentQr: DEFAULT_QR, upiName: upi || owner, googleReviewUrl: review,
+      plan: "Pending", subscriptionEnds: Date.now(), paymentQr: DEFAULT_QR, upiId: upiId || "", upiName: upi || owner, googleReviewUrl: review,
       tables: [1, 2, 3, 4].map(no => ({ no, seats: 4 })),
       categories: ["Starters", "Main Course", "Breads", "Beverages"],
       menu: [], addons: [], createdAt: Date.now()
@@ -780,7 +786,7 @@
   }
 
   function field(label, id, tag, placeholder, type) {
-    const placeholderOnly = ["Cafe Aroma", "Owner name", "Mobile number", "City", "4 digit PIN", "Shown under payment QR", "Paste Google review link", "Paneer Tikka", "Starters", "220", "Extra Roti", "30", "7", "4"];
+    const placeholderOnly = ["Cafe Aroma", "Owner name", "Mobile number", "City", "4 digit PIN", "Shown under payment QR", "Paste Google review link", "name@upi or 9999999999@paytm", "Paneer Tikka", "Starters", "220", "Extra Roti", "30", "7", "4", "Enter passcode", "Enter PIN"];
     const value = placeholder && !placeholderOnly.includes(placeholder) ? placeholder : "";
     if (tag === "textarea") return `<div class="field"><label>${label}</label><textarea id="${id}" placeholder="${placeholder || ""}">${value}</textarea></div>`;
     return `<div class="field"><label>${label}</label><input id="${id}" type="${type || "text"}" placeholder="${placeholder || ""}" value="${esc(value)}"></div>`;

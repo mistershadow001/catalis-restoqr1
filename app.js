@@ -66,7 +66,8 @@
           createdAt: now
         }
       ],
-      orders: []
+      orders: [],
+      feedbacks: []
     };
   }
 
@@ -105,6 +106,7 @@
     const next = clone(raw || seed());
     next.restaurants = next.restaurants || [];
     next.orders = next.orders || [];
+    next.feedbacks = next.feedbacks || [];
     next.restaurants.forEach(r => {
       r.paymentQr = r.paymentQr || DEFAULT_QR;
       r.googleReviewUrl = r.googleReviewUrl || "";
@@ -265,6 +267,7 @@
             <button class="btn" data-action="toggle-qr" data-slug="${r.slug}">${r.qrEnabled ? "Disable QR" : "Enable QR"}</button>
             <button class="btn blue" data-action="extend-sub" data-slug="${r.slug}">Add 30 Days</button>
             <a class="btn" href="#/owner?resto=${r.slug}">Open Panel</a>
+            <button class="btn bad" data-action="delete-resto" data-slug="${r.slug}">Delete</button>
           </div>
         </div>
       </div>`;
@@ -288,7 +291,7 @@
       ${topbar("owner", r)}
       <main class="wrap">
         <div class="tabs">
-          ${["overview", "menu", "addons", "tables", "kitchen", "billing", "settings"].map(t => `<button class="tab-btn ${ownerTab === t ? "active" : ""}" data-action="owner-tab" data-tab="${t}">${title(t)}</button>`).join("")}
+          ${["overview", "menu", "addons", "tables", "kitchen", "billing", "feedback", "settings"].map(t => `<button class="tab-btn ${ownerTab === t ? "active" : ""}" data-action="owner-tab" data-tab="${t}">${title(t)}</button>`).join("")}
         </div>
         ${ownerContent(r)}
       </main>`;
@@ -300,6 +303,7 @@
     if (ownerTab === "tables") return tablesPanel(r);
     if (ownerTab === "kitchen") return kitchenPanel(r);
     if (ownerTab === "billing") return billingPanel(r);
+    if (ownerTab === "feedback") return feedbackPanel(r);
     if (ownerTab === "settings") return settingsPanel(r);
     const open = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
     return `
@@ -440,6 +444,28 @@
   function billingPanel(r) {
     const orders = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
     return `<section class="card"><div class="section-head"><div><h2>Billing Counter</h2><p>Check PhonePe payment, mark paid, and close tables.</p></div></div>${orders.map(billCard).join("") || empty("No active bills")}</section>`;
+  }
+
+  function feedbackPanel(r) {
+    const fbs = (state.feedbacks || []).filter(f => f.restaurantSlug === r.slug).reverse();
+    const avg = fbs.length ? (fbs.reduce((s, f) => s + (f.stars || 0), 0) / fbs.length).toFixed(1) : "-";
+    const stars = n => [1,2,3,4,5].map(i => i <= n ? "★" : "☆").join("");
+    return `<section class="card">
+      <div class="section-head">
+        <div><h2>Customer Feedback</h2><p>${fbs.length} feedback${fbs.length !== 1 ? "s" : ""} · Avg rating ${avg}/5</p></div>
+      </div>
+      ${fbs.map(f => `
+        <div class="list-item">
+          <div class="row">
+            <div>
+              <span style="color:#f59e0b;font-size:18px">${stars(f.stars)}</span>
+              <p class="muted small" style="margin:4px 0 0">Table ${f.table} · Order #${f.orderId.slice(-5).toUpperCase()} · ${new Date(f.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
+            </div>
+            <span class="pill ${f.stars >= 4 ? "ok" : f.stars >= 3 ? "warn" : "bad"}">${f.stars}/5</span>
+          </div>
+          ${f.text ? `<p style="margin:8px 0 0;font-size:14px">"${esc(f.text)}"</p>` : ""}
+        </div>`).join("") || empty("No feedback yet")}
+    </section>`;
   }
 
   function settingsPanel(r) {
@@ -617,6 +643,16 @@
 
         <button class="btn block" style="width:100%;margin-bottom:10px" data-action="refresh-order" data-slug="${r.slug}">↻ Refresh Status</button>
         <button class="btn block" style="width:100%;color:var(--muted,#6b7280)" data-action="dismiss-review" data-slug="${r.slug}">+ Order More Items</button>
+
+        <div style="background:var(--card,#fff);border:1px solid var(--line,#e5e7eb);border-radius:12px;padding:14px;margin-top:14px">
+          <p style="margin:0 0 10px;font-weight:600;font-size:14px">💬 Share Feedback</p>
+          <p class="muted small" style="margin:0 0 10px">Rate your experience — sent directly to the kitchen and counter.</p>
+          <div style="display:flex;gap:8px;margin-bottom:10px" id="star-row">
+            ${[1,2,3,4,5].map(n => `<button data-action="set-star" data-star="${n}" data-order="${o.id}" style="font-size:26px;background:none;border:none;cursor:pointer;padding:0;line-height:1">☆</button>`).join("")}
+          </div>
+          <textarea id="feedback-text" placeholder="What did you love? What can we improve?" rows="3" style="width:100%;box-sizing:border-box;margin-bottom:10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;padding:8px;font-size:14px"></textarea>
+          <button class="btn primary block" data-action="submit-feedback" data-slug="${r.slug}" data-order="${o.id}" data-table="${o.table}">Send Feedback</button>
+        </div>
       </div>`;
   }
 
@@ -729,6 +765,8 @@
     if (action === "addon-change") return updatePaymentTotal();
     if (action === "dismiss-review") return localStorage.removeItem("restoqr_last_order_" + el.dataset.slug), render();
     if (action === "refresh-order") return render();
+    if (action === "set-star") return setStar(el);
+    if (action === "submit-feedback") return submitFeedback(el);
     if (action === "mark-paid") return updateOrder(el.dataset.id, o => { o.paymentStatus = "paid"; o.status = "pending"; });
     if (action === "advance-order") return updateOrder(el.dataset.id, o => o.status = el.dataset.next);
     if (action === "close-order") return updateOrder(el.dataset.id, o => o.status = "completed");
@@ -839,6 +877,34 @@
     toast("Order placed! Waiting for payment verification.");
     // Re-render stays on the same hash — render() will now show the order status card at top
     render();
+  }
+
+  function setStar(el) {
+    const n = Number(el.dataset.star);
+    document.querySelectorAll("[data-action='set-star']").forEach((btn, i) => {
+      btn.textContent = i < n ? "★" : "☆";
+      btn.style.color = i < n ? "#f59e0b" : "#d1d5db";
+    });
+    document.getElementById("star-row").dataset.selected = n;
+  }
+
+  function submitFeedback(el) {
+    const stars = Number(document.getElementById("star-row")?.dataset.selected || 0);
+    const text = (document.getElementById("feedback-text")?.value || "").trim();
+    if (!stars) return toast("Please select a star rating");
+    mutate(s => {
+      s.feedbacks = s.feedbacks || [];
+      s.feedbacks.push({
+        id: uid(),
+        restaurantSlug: el.dataset.slug,
+        orderId: el.dataset.order,
+        table: el.dataset.table,
+        stars,
+        text,
+        createdAt: Date.now()
+      });
+    });
+    toast("Thanks for your feedback! 🙏");
   }
 
   function updateRestaurant(slug, fn) {

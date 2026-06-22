@@ -10,6 +10,7 @@
   let ownerTab = "overview";
   let customerCat = "";
   let cart = {};
+  let selectedAddons = {}; // addonId -> true
 
   const COMMON_ITEMS = [
     ["Paneer Tikka", "Starters", 220, true], ["Chicken 65", "Starters", 280, false], ["Veg Manchurian", "Starters", 180, true],
@@ -490,8 +491,11 @@
             <div style="padding:10px 14px 4px;border-top:1px solid var(--line);margin-top:8px">
               <p style="font-size:12px;font-weight:600;color:var(--muted,#6b7280);margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
               ${r.addons.filter(a => a.active).map(a => `
-                <div class="customer-item" style="opacity:.85">
-                  <div><strong>+ ${esc(a.name)}</strong><p class="muted small">${money(a.price)} · Add at checkout</p></div>
+                <div class="customer-item">
+                  <label style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1">
+                    <input type="checkbox" data-action="addon-toggle" data-addon="${a.id}" data-price="${a.price}" data-base="0" data-pa="${r.upiId||""}" data-pn="${esc(r.upiName||r.name)}" class="addon-chk" ${selectedAddons[a.id] ? "checked" : ""} style="width:18px;height:18px;accent-color:var(--ok,#16a34a)">
+                    <div><strong>+ ${esc(a.name)}</strong><p class="muted small">${money(a.price)}</p></div>
+                  </label>
                 </div>`).join("")}
             </div>` : ""}
         </div>
@@ -510,7 +514,12 @@
   function checkoutBox(r, total) {
     const pa = encodeURIComponent(r.upiId || "");
     const pn = encodeURIComponent(r.upiName || r.name);
-    const activeAddons = r.addons.filter(a => a.active);
+    const addonTotal = Object.keys(selectedAddons).reduce((s, id) => {
+      const a = find(r.addons, id);
+      return s + (a ? a.price : 0);
+    }, 0);
+    const grand = total + addonTotal;
+    const selectedAddonList = Object.keys(selectedAddons).map(id => find(r.addons, id)).filter(Boolean);
 
     return `<div class="cart-bar" style="display:flex;flex-direction:column;max-height:70vh;">
 
@@ -520,39 +529,27 @@
             const m = find(r.menu, id);
             return m ? `<div class="cart-row"><span>${esc(m.name)} × ${qty}</span><span>${money(m.price * qty)}</span></div>` : "";
           }).join("")}
-          <div class="cart-row cart-total"><span>Total</span><strong id="pay-total-display">${money(total)}</strong></div>
+          ${selectedAddonList.map(a => `<div class="cart-row"><span>+ ${esc(a.name)}</span><span>${money(a.price)}</span></div>`).join("")}
+          <div class="cart-row cart-total"><span>Total</span><strong>${money(grand)}</strong></div>
         </div>
-
-        ${activeAddons.length ? `
-          <div class="addon-block">
-            <p class="muted small">Add extras?</p>
-            ${activeAddons.map(a => `
-              <label class="addon-row">
-                <input type="checkbox" data-action="addon-change" data-addon="${a.id}" data-price="${a.price}" data-base="${total}" data-pa="${r.upiId || ""}" data-pn="${esc(r.upiName || r.name)}" class="addon-chk">
-                <span>${esc(a.name)} · ${money(a.price)}</span>
-              </label>`).join("")}
-          </div>` : ""}
 
         <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 8px;box-sizing:border-box"></textarea>
 
         <p class="muted small" style="margin-bottom:8px">
-          Pay <strong id="pay-amount-label">${money(total)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong>
+          Pay <strong>${money(grand)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong>
         </p>
 
         <div style="display:flex;gap:10px;margin-bottom:4px">
-          <a id="phonepe-btn"
-             href="${r.upiId ? `phonepe://pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR` : `phonepe://`}"
+          <a href="${r.upiId ? `phonepe://pay?pa=${pa}&pn=${pn}&am=${grand}&cu=INR` : `phonepe://`}"
              style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border-radius:10px;background:#5f259f;color:#fff;font-weight:600;text-decoration:none;font-size:15px">
             🟣 PhonePe
           </a>
-          <a id="gpay-btn"
-             href="${r.upiId ? `tez://upi/pay?pa=${pa}&pn=${pn}&am=${total}&cu=INR` : `tez://`}"
+          <a href="${r.upiId ? `tez://upi/pay?pa=${pa}&pn=${pn}&am=${grand}&cu=INR` : `tez://`}"
              style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border-radius:10px;background:#1a73e8;color:#fff;font-weight:600;text-decoration:none;font-size:15px">
             🔵 GPay
           </a>
         </div>
-        ${!r.upiId ? `<p style="color:#ef4444;font-size:12px;margin:4px 0">⚠ UPI ID not set — links open app but won't pre-fill amount. Add UPI ID in Settings.</p>` : ""}
-
+        ${!r.upiId ? `<p style="color:#ef4444;font-size:12px;margin:4px 0">⚠ UPI ID not set — add in Settings.</p>` : ""}
       </div>
 
       <div style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">

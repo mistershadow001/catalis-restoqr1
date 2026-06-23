@@ -13,6 +13,30 @@
   let selectedAddons = {}; // addonId -> true
   let billingDateFilter = new Date().toISOString().slice(0, 10); // YYYY-MM-DD, default today
 
+  // ================================================================
+  // STAFF DASHBOARD — state
+  // ================================================================
+  let staffTab = "tables";      // "tables" | "kitchen" | "billing"
+  let staffSheetTable = null;   // table number shown in bottom sheet
+  let staffSelectedRole = "waiter"; // role selected on login screen
+
+  // Staff alert fingerprints — tracks order changes to trigger sounds
+  let staffSeenFingerprints = {};
+  let staffAlertsInitialized = false;
+
+  // Staff master key generation (same algorithm as displayed in Settings)
+  function generateMasterKey(slug) {
+    const raw = slug + "_staff_2024";
+    let h = 0;
+    for (let i = 0; i < raw.length; i++) h = (Math.imul(31, h) + raw.charCodeAt(i)) | 0;
+    return "STF-" + Math.abs(h).toString(16).toUpperCase().padStart(6, "0");
+  }
+
+  function staffKeyFor(slug) { return "restoqr_staff_" + slug; }
+  function isStaffUnlocked(slug) { return localStorage.getItem(staffKeyFor(slug)) === "yes"; }
+  function staffRole(slug) { return localStorage.getItem("restoqr_staff_role_" + slug) || "waiter"; }
+  // ================================================================
+
   // ---- New Order Alert Sound ----
   let soundEnabled = localStorage.getItem("restoqr_sound_off") !== "yes";
   let audioCtx = null;
@@ -125,6 +149,7 @@
     }
     window.addEventListener("hashchange", () => {
       customerCat = "";
+      staffSheetTable = null;
       render();
     });
   }
@@ -146,6 +171,7 @@
       r.upiId = r.upiId || "";
       r.couponCode = r.couponCode || "";
       r.tables = r.tables || [];
+      r.tableCount = r.tableCount || r.tables.length || 4;
       r.menu = r.menu || [];
       r.addons = r.addons || [];
       r.categories = unique([...(r.categories || []), ...r.menu.map(i => i.category)]);
@@ -210,25 +236,52 @@
     });
   }
 
-  // Compares incoming order list against what we've already seen and, if the
-  // owner currently has that restaurant's panel open, plays a chime + toast.
+  // Tracks a fingerprint (total + item count) per order so we fire the alert
+  // whenever anything changes — new orders, same-table additions, add-ons, etc.
+  let seenOrderFingerprints = {}; // orderId -> "total:itemCount"
+
+  function orderFingerprint(o) {
+    const itemQty = (o.items || []).reduce((s, i) => s + i.qty, 0);
+    const addonQty = (o.addons || []).reduce((s, a) => s + (a.qty || 1), 0);
+    return `${o.total}:${itemQty}:${addonQty}`;
+  }
+
   function checkNewOrders(nextState) {
-    const incoming = new Set((nextState.orders || []).map(o => o.id));
+    const orders = nextState.orders || [];
     if (!seenOrdersInitialized) {
-      seenOrderIds = incoming;
+      orders.forEach(o => { seenOrderFingerprints[o.id] = orderFingerprint(o); });
+      seenOrderIds = new Set(orders.map(o => o.id));
       seenOrdersInitialized = true;
       return;
     }
-    const newOnes = (nextState.orders || []).filter(o => !seenOrderIds.has(o.id));
-    seenOrderIds = incoming;
-    if (!newOnes.length) return;
+
     const slug = currentOwnerSlugIfAny();
-    if (!slug) return;
-    const relevant = newOnes.filter(o => o.restaurantSlug === slug);
-    if (relevant.length) {
-      playOrderAlertSound();
-      relevant.forEach(o => toast("🔔 New order — Table " + o.table));
-    }
+    let shouldChime = false;
+
+    orders.forEach(o => {
+      if (o.restaurantSlug !== slug) return;
+      const fp = orderFingerprint(o);
+      const prev = seenOrderFingerprints[o.id];
+      if (prev === undefined) {
+        // Brand new order
+        shouldChime = true;
+        toast("🔔 New order — Table " + o.table);
+      } else if (prev !== fp) {
+        // Existing order updated (items added, add-ons, etc.)
+        shouldChime = true;
+        toast("➕ Order updated — Table " + o.table);
+      }
+      seenOrderFingerprints[o.id] = fp;
+    });
+
+    // Clean up fingerprints for deleted/completed orders
+    const currentIds = new Set(orders.map(o => o.id));
+    Object.keys(seenOrderFingerprints).forEach(id => {
+      if (!currentIds.has(id)) delete seenOrderFingerprints[id];
+    });
+    seenOrderIds = currentIds;
+
+    if (shouldChime && slug) playOrderAlertSound();
   }
 
   function render() {
@@ -237,6 +290,7 @@
     if (r.path === "/admin") return html(adminView());
     if (r.path === "/owner") return html(ownerView(r.params));
     if (r.path === "/order") return html(customerView(r.params));
+    if (r.path === "/staff") return html(staffView(r.params));
     return html(homeView());
   }
 
@@ -1189,7 +1243,454 @@
       </section>`;
   }
 
+  // ================================================================
+  // STAFF DASHBOARD — sounds
+  // ================================================================
+
+  let staffAudioCtx = null;
+  function ensureStaffAudio() {
+    if (!staffAudioCtx) {
+      try { staffAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { staffAudioCtx = null; }
+    }
+    if (staffAudioCtx && staffAudioCtx.state === "suspended") staffAudioCtx.resume();
+    return staffAudioCtx;
+  }
+  // Double-pulse for waiter/bill requests
+  function playWaiterAlertSound() {
+    const ctx = ensureStaffAudio(); if (!ctx) return;
+    const now = ctx.currentTime;
+    [0, 0.18, 0.36, 0.54].forEach((t, i) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine"; osc.frequency.value = i % 2 === 0 ? 1050 : 880;
+      gain.gain.setValueAtTime(0, now+t); gain.gain.linearRampToValueAtTime(0.4, now+t+0.02); gain.gain.linearRampToValueAtTime(0, now+t+0.14);
+      osc.connect(gain).connect(ctx.destination); osc.start(now+t); osc.stop(now+t+0.16);
+    });
+  }
+  // Softer chime for new kitchen orders
+  function playOrderChimeSound() {
+    const ctx = ensureStaffAudio(); if (!ctx) return;
+    const now = ctx.currentTime;
+    [0, 0.22].forEach((t, i) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine"; osc.frequency.value = i === 0 ? 660 : 880;
+      gain.gain.setValueAtTime(0, now+t); gain.gain.linearRampToValueAtTime(0.3, now+t+0.02); gain.gain.linearRampToValueAtTime(0, now+t+0.2);
+      osc.connect(gain).connect(ctx.destination); osc.start(now+t); osc.stop(now+t+0.22);
+    });
+  }
+
+  function staffOrderFingerprint(o) {
+    const itemQty  = (o.items  || []).reduce((s, i) => s + i.qty, 0);
+    const addonQty = (o.addons || []).reduce((s, a) => s + (a.qty || 1), 0);
+    return `${o.waiterRequest||""}:${o.total}:${itemQty}:${addonQty}:${o.status}:${o.paymentStatus}`;
+  }
+
+  function checkStaffAlerts(slug) {
+    const orders = state.orders.filter(o => o.restaurantSlug === slug && o.status !== "completed");
+    if (!staffAlertsInitialized) {
+      orders.forEach(o => { staffSeenFingerprints[o.id] = staffOrderFingerprint(o); });
+      staffAlertsInitialized = true;
+      return;
+    }
+    let hasWaiterAlert = false, hasOrderUpdate = false;
+    orders.forEach(o => {
+      const fp = staffOrderFingerprint(o);
+      const prev = staffSeenFingerprints[o.id];
+      if (prev === undefined) { hasOrderUpdate = true; toast("🔔 New order — Table " + o.table); }
+      else if (prev !== fp) {
+        const prevWaiter = prev.split(":")[0], currWaiter = o.waiterRequest || "";
+        if (currWaiter && prevWaiter !== currWaiter) { hasWaiterAlert = true; toast(currWaiter === "bill" ? "💳 Bill requested — Table " + o.table : "🔔 Waiter called — Table " + o.table); }
+        else hasOrderUpdate = true;
+      }
+      staffSeenFingerprints[o.id] = fp;
+    });
+    const currentIds = new Set(orders.map(o => o.id));
+    Object.keys(staffSeenFingerprints).forEach(id => { if (!currentIds.has(id)) delete staffSeenFingerprints[id]; });
+    if (hasWaiterAlert) playWaiterAlertSound();
+    else if (hasOrderUpdate) playOrderChimeSound();
+  }
+
+  // ================================================================
+  // STAFF DASHBOARD — CSS (injected once)
+  // ================================================================
+  (function injectStaffStyles() {
+    if (document.getElementById("staff-css")) return;
+    const style = document.createElement("style");
+    style.id = "staff-css";
+    style.textContent = `
+      .staff-shell { min-height:100vh; background:#f5f0e8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+      .staff-topbar { position:sticky;top:0;z-index:200;background:#2a1a0e;color:#f5ead8;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:10px; }
+      .staff-topbar h1 { font-size:16px;font-weight:700;color:#f5ead8;margin:0;letter-spacing:.02em; }
+      .staff-topbar .staff-resto-name { font-size:12px;color:#c4a96a;margin:0; }
+      .staff-tab-bar { display:flex;background:#1a0f06;border-bottom:1px solid #3a2510; }
+      .staff-tab-bar button { flex:1;padding:12px 4px;background:none;border:none;color:#8a7060;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;border-bottom:2.5px solid transparent;transition:all .15s; }
+      .staff-tab-bar button.active { color:#c4a96a;border-bottom-color:#c4a96a; }
+      .staff-body { padding:14px;padding-bottom:100px; }
+      .staff-empty { text-align:center;color:#9a8878;padding:40px 20px;font-size:14px; }
+      .staff-empty .se-icon { font-size:40px;margin-bottom:10px; }
+      .staff-section-lbl { font-size:11px;font-weight:700;color:#9a8878;text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid #e8dcc8; }
+      .s-order-card { background:#fff;border-radius:14px;padding:14px;margin-bottom:12px;border:1px solid #e8dcc8; }
+      .s-order-card .oc-head { display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px; }
+      .s-order-card .oc-table { font-size:18px;font-weight:800;color:#2a1a0e; }
+      .s-order-card .oc-id { font-size:11px;color:#9a8878;margin-top:2px; }
+      .s-order-card .oc-items { border-top:1px dashed #e8dcc8;padding-top:10px;margin-bottom:10px; }
+      .s-order-card .oc-item-row { display:flex;justify-content:space-between;font-size:14px;padding:3px 0;color:#3a2510; }
+      .s-order-card .oc-total { display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:1px solid #e8dcc8;padding-top:8px;color:#2a1a0e; }
+      .s-order-card .oc-actions { display:flex;gap:8px;margin-top:12px;flex-wrap:wrap; }
+      .s-order-card .oc-note { font-size:12px;color:#9a8878;background:#faf5ec;border-radius:6px;padding:6px 8px;margin:6px 0; }
+      .spill { display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase; }
+      .spill.green { background:#d4edda;color:#155724; }
+      .spill.amber { background:#fff3cd;color:#7a5c1e; }
+      .spill.red   { background:#f8d7da;color:#721c24; }
+      .spill.blue  { background:#cce5ff;color:#004085; }
+      .spill.gray  { background:#e8dcc8;color:#5a4030; }
+      .sbtn { flex:1;min-width:0;padding:11px 10px;border-radius:10px;font-size:13px;font-weight:700;border:none;cursor:pointer;transition:transform .1s,opacity .1s;text-align:center; }
+      .sbtn:active { transform:scale(0.97);opacity:.85; }
+      .sbtn.primary { background:#c4a96a;color:#2a1a0e; }
+      .sbtn.ok      { background:#27ae60;color:#fff; }
+      .sbtn.danger  { background:#c0392b;color:#fff; }
+      .sbtn.plain   { background:#f0e8d8;color:#5a4030;border:1px solid #d4c4a8; }
+      .staff-login-wrap { padding:24px 16px; }
+      .staff-login-card { background:#fff;border-radius:16px;padding:24px;border:1px solid #e8dcc8;max-width:380px;margin:0 auto; }
+      .staff-login-card h2 { margin:0 0 6px;color:#2a1a0e;font-size:20px; }
+      .staff-login-card p { color:#9a8878;font-size:13px;margin:0 0 20px; }
+      .staff-input { width:100%;box-sizing:border-box;padding:12px 14px;border:1.5px solid #e8dcc8;border-radius:10px;font-size:16px;margin-bottom:12px;background:#faf5ec;color:#2a1a0e;outline:none;transition:border-color .15s; }
+      .staff-input:focus { border-color:#c4a96a; }
+      .staff-role-row { display:flex;gap:8px;margin-bottom:16px; }
+      .role-btn { flex:1;padding:11px;border-radius:10px;border:1.5px solid #e8dcc8;background:#faf5ec;color:#5a4030;font-size:13px;font-weight:600;cursor:pointer;text-align:center;transition:all .15s; }
+      .role-btn.selected { background:#c4a96a;border-color:#c4a96a;color:#2a1a0e; }
+      .waiter-alert { background:#c0392b;color:#fff;border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px; }
+      .waiter-alert .wa-info { flex:1; }
+      .waiter-alert .wa-table { font-size:18px;font-weight:800; }
+      .waiter-alert .wa-msg { font-size:12px;opacity:.85;margin-top:2px; }
+      .floor-plan-wrap { background:linear-gradient(135deg,#1a0f06 0%,#2a1a0e 100%);border-radius:16px;padding:18px 14px 14px;border:2px solid #4a2f18;box-shadow:inset 0 2px 8px rgba(0,0,0,.4),0 4px 20px rgba(0,0,0,.3);overflow:hidden;position:relative; }
+      .floor-plan-svg { width:100%;display:block; }
+      .tbl-sheet-bg { position:fixed;inset:0;background:rgba(42,26,14,.5);z-index:500;display:flex;align-items:flex-end; }
+      .tbl-sheet { background:#fff;border-radius:20px 20px 0 0;padding:20px 16px 40px;width:100%;box-sizing:border-box;max-height:85vh;overflow-y:auto; }
+      .tbl-sheet-handle { width:36px;height:4px;background:#e8dcc8;border-radius:2px;margin:0 auto 16px; }
+      .svg-chair { fill:#2a1408;stroke:#5a3018;stroke-width:1; }
+      .svg-table-no { fill:#c4a96a;font-size:11px;font-weight:800;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central; }
+      .svg-amt { fill:#a08060;font-size:7px;font-weight:600;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central; }
+      @keyframes pulse-red { 0%,100%{box-shadow:0 0 0 3px rgba(231,76,60,.35);}50%{box-shadow:0 0 0 7px rgba(231,76,60,.1);} }
+    `;
+    document.head.appendChild(style);
+  })();
+
+  // ================================================================
+  // STAFF DASHBOARD — main view router
+  // ================================================================
+  function staffView(params) {
+    injectStaffStyles_noop(); // styles already injected above at boot
+    const slug = params.get("resto") || localStorage.getItem("restoqr_owner_slug") || (state.restaurants[0]?.slug || "");
+
+    // No slug — show restaurant picker
+    if (!slug) {
+      const list = state.restaurants || [];
+      if (list.length === 1) { location.replace("#/staff?resto=" + list[0].slug); return ""; }
+      return `<div style="padding:32px 16px;font-family:sans-serif;max-width:400px;margin:0 auto">
+        <h2 style="margin:0 0 16px;color:#2a1a0e">Select Restaurant</h2>
+        ${list.map(rx => `<a href="#/staff?resto=${rx.slug}" style="display:block;padding:14px 18px;margin-bottom:10px;background:#fff;border:1.5px solid #e8dcc8;border-radius:12px;color:#2a1a0e;text-decoration:none;font-weight:600">${esc(rx.name)}</a>`).join("")}
+      </div>`;
+    }
+
+    const resto = bySlug(slug);
+    if (!resto) return `<div style="padding:40px;text-align:center;color:#9a8878;font-family:sans-serif">Restaurant not found. <a href="#/">Go home</a></div>`;
+
+    // Check alerts on each render
+    checkStaffAlerts(slug);
+
+    if (!isStaffUnlocked(slug)) return staffLoginView(resto);
+    return staffMainView(resto);
+  }
+
+  // no-op — styles injected at parse time above
+  function injectStaffStyles_noop() {}
+
+  // ================================================================
+  // STAFF DASHBOARD — login view
+  // ================================================================
+  function staffLoginView(r) {
+    return `<div class="staff-shell">
+      <div class="staff-topbar">
+        <div><p class="staff-resto-name">${esc(r.name)}</p><h1>Staff Login</h1></div>
+        <a href="#/owner?resto=${r.slug}" style="color:#c4a96a;font-size:12px;text-decoration:none">Owner panel ›</a>
+      </div>
+      <div class="staff-login-wrap">
+        <div class="staff-login-card">
+          <h2>Staff access</h2>
+          <p>Enter the staff master key to continue. Ask your manager if you don't have it.</p>
+          <label style="font-size:12px;font-weight:700;color:#9a8878;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Your role</label>
+          <div class="staff-role-row">
+            <div class="role-btn ${staffSelectedRole==="waiter"?"selected":""}" data-action="staff-select-role" data-role="waiter">🛎 Waiter</div>
+            <div class="role-btn ${staffSelectedRole==="kitchen"?"selected":""}" data-action="staff-select-role" data-role="kitchen">👨‍🍳 Kitchen</div>
+            <div class="role-btn ${staffSelectedRole==="billing"?"selected":""}" data-action="staff-select-role" data-role="billing">💳 Billing</div>
+          </div>
+          <label style="font-size:12px;font-weight:700;color:#9a8878;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Staff master key</label>
+          <input id="staff-key-input" class="staff-input" type="password" placeholder="Enter master key" autocomplete="off">
+          <button class="sbtn primary" style="width:100%;margin-top:4px" data-action="staff-login" data-slug="${r.slug}">Enter Dashboard</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ================================================================
+  // STAFF DASHBOARD — main dashboard
+  // ================================================================
+  function staffMainView(r) {
+    const role = staffRole(r.slug);
+    const pendingAlerts = state.orders.filter(o => o.restaurantSlug === r.slug && o.waiterRequest && o.status !== "completed").length;
+
+    const tabs = [
+      { id: "tables",  label: "Tables" + (pendingAlerts ? ` (${pendingAlerts})` : "") },
+      { id: "kitchen", label: "Kitchen" },
+      { id: "billing", label: "Billing" },
+    ];
+
+    let body = "";
+    if (staffTab === "tables")  body = staffTablesView(r);
+    if (staffTab === "kitchen") body = staffKitchenView(r);
+    if (staffTab === "billing") body = staffBillingView(r);
+
+    const sheet = staffSheetTable !== null ? staffTableSheetView(r, staffSheetTable) : "";
+
+    return `<div class="staff-shell" id="staff-app">
+      <div class="staff-topbar">
+        <div>
+          <p class="staff-resto-name">${esc(r.name)}</p>
+          <h1>${role === "kitchen" ? "👨‍🍳 Kitchen" : role === "billing" ? "💳 Billing" : "🛎 Waiter"} Dashboard</h1>
+        </div>
+        <button class="sbtn plain" style="flex:none;padding:8px 12px;font-size:12px" data-action="staff-logout" data-slug="${r.slug}">Logout</button>
+      </div>
+      <div class="staff-tab-bar">
+        ${tabs.map(t => `<button class="${staffTab===t.id?"active":""}" data-action="staff-tab" data-tab="${t.id}">${t.label}</button>`).join("")}
+      </div>
+      <div class="staff-body">${body}</div>
+      ${sheet}
+    </div>`;
+  }
+
+  // ================================================================
+  // STAFF DASHBOARD — tables view (SVG floor plan)
+  // ================================================================
+  function staffTablesView(r) {
+    const orders = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
+    const tableCount = r.tableCount || r.tables.length || 4;
+    const tableNos = Array.from({ length: tableCount }, (_, i) => i + 1);
+    orders.forEach(o => { if (!tableNos.includes(o.table)) tableNos.push(o.table); });
+    tableNos.sort((a, b) => a - b);
+
+    // Waiter alert banners
+    const alerts = orders.filter(o => o.waiterRequest);
+    let alertHtml = "";
+    if (alerts.length) {
+      alertHtml = `<div class="staff-section-lbl">⚡ Waiter Requests (${alerts.length})</div>`;
+      alerts.forEach(o => {
+        const reqIcon = o.waiterRequest === "bill" ? "💳" : "🔔";
+        const reqType = o.waiterRequest === "bill" ? "Bill requested" : "Waiter called";
+        alertHtml += `<div class="waiter-alert">
+          <div class="wa-info"><div class="wa-table">${reqIcon} Table ${o.table}</div><div class="wa-msg">${reqType} · #${o.id.slice(-5).toUpperCase()} · ${money(o.total)}</div></div>
+          <button class="sbtn plain" style="flex:none;font-size:12px;padding:8px 12px;background:#fff2;color:#fff;border:1.5px solid rgba(255,255,255,.3)" data-action="staff-dismiss-waiter" data-id="${o.id}">Done</button>
+        </div>`;
+      });
+    }
+
+    if (!tableNos.length) return `${alertHtml}<div class="staff-empty"><div class="se-icon">🪑</div>No tables configured.</div>`;
+
+    // SVG floor plan
+    const COLS=3, CELL=80, PAD=10;
+    const ROWS = Math.ceil(tableNos.length / COLS);
+    const SVG_W = COLS*CELL+PAD*2, SVG_H = ROWS*CELL+PAD*2;
+    const TW=42, TH=30, CR=5, CO=7;
+
+    const freeCount  = tableNos.filter(n => !orders.some(o => o.table===n)).length;
+    const busyCount  = tableNos.filter(n => orders.some(o => o.table===n && !o.waiterRequest)).length;
+    const alertCount = tableNos.filter(n => orders.some(o => o.table===n && o.waiterRequest)).length;
+
+    const statsHtml = `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:80px;background:#1a0f06;border-radius:10px;padding:10px 12px;border:1px solid #3a2010;text-align:center"><div style="font-size:20px;font-weight:800;color:#c4a96a">${freeCount}</div><div style="font-size:10px;color:#6a4e30;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Free</div></div>
+      <div style="flex:1;min-width:80px;background:#1a0f06;border-radius:10px;padding:10px 12px;border:1px solid #3a2010;text-align:center"><div style="font-size:20px;font-weight:800;color:#e07060">${busyCount}</div><div style="font-size:10px;color:#6a4e30;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Occupied</div></div>
+      <div style="flex:1;min-width:80px;background:#1a0f06;border-radius:10px;padding:10px 12px;border:1px solid #3a2010;text-align:center"><div style="font-size:20px;font-weight:800;color:#ff6a5a">${alertCount}</div><div style="font-size:10px;color:#6a4e30;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Attention</div></div>
+    </div>`;
+
+    const tableSvgs = tableNos.map((no, idx) => {
+      const col = idx % COLS, row = Math.floor(idx / COLS);
+      const cx = PAD + col*CELL + CELL/2, cy = PAD + row*CELL + CELL/2;
+      const tOrders = orders.filter(o => o.table === no);
+      const hasAlert = tOrders.some(o => o.waiterRequest);
+      const hasOrder = tOrders.length > 0;
+      const tState = hasAlert ? "alert" : hasOrder ? "busy" : "free";
+      const total = tOrders.reduce((s, o) => s + o.total, 0);
+      const tx = cx-TW/2, ty = cy-TH/2;
+      const chairs = [[cx-TW/4,ty-CO],[cx+TW/4,ty-CO],[cx-TW/4,ty+TH+CO],[cx+TW/4,ty+TH+CO],[tx-CO,cy],[tx+TW+CO,cy]];
+      const chairsSvg = chairs.map(([x,y])=>`<rect x="${x-CR}" y="${y-CR}" width="${CR*2}" height="${CR*2}" rx="2" fill="${tState==="free"?"#2a1408":tState==="busy"?"#5a1008":"#6a0f08"}" stroke="${tState==="free"?"#5a3018":tState==="busy"?"#a02020":"#e03030"}" stroke-width="1"/>`).join("");
+      const fill = tState==="free" ? "#3a2010" : tState==="busy" ? "#7a1a10" : "#8b1a10";
+      const stroke = tState==="free" ? "#6a3a1a" : tState==="busy" ? "#c0392b" : "#ff4a3a";
+      const tableSvg = `<rect x="${tx}" y="${ty}" width="${TW}" height="${TH}" rx="7" fill="${fill}" stroke="${stroke}" stroke-width="${tState==="alert"?2:1.5}"/>`;
+      const numFill = tState==="free"?"#c4a96a":tState==="busy"?"#ff9a8a":"#ffb8a8";
+      const numSvg = `<text x="${cx}" y="${cy-3}" fill="${numFill}" font-size="11" font-weight="800" font-family="-apple-system,sans-serif" text-anchor="middle" dominant-baseline="central">${no}</text>`;
+      const amtSvg = hasOrder ? `<text x="${cx}" y="${cy+8}" fill="${tState==="busy"?"#ff8070":"#ffa090"}" font-size="7" font-weight="600" font-family="-apple-system,sans-serif" text-anchor="middle" dominant-baseline="central">₹${Math.round(total).toLocaleString("en-IN")}</text>` : "";
+      const bellSvg = hasAlert ? `<text x="${cx+TW/2-2}" y="${cy-TH/2+2}" font-size="8" text-anchor="middle" dominant-baseline="central">${tOrders.find(o=>o.waiterRequest)?.waiterRequest==="bill"?"💳":"🔔"}</text>` : "";
+      const overlay = `<rect x="${cx-CELL/2+2}" y="${cy-CELL/2+2}" width="${CELL-4}" height="${CELL-4}" rx="10" fill="transparent" data-action="staff-open-table" data-table="${no}" style="cursor:pointer"/>`;
+      return `<g>${chairsSvg}${tableSvg}${numSvg}${amtSvg}${bellSvg}${overlay}</g>`;
+    }).join("");
+
+    return `${alertHtml}
+    <div class="staff-section-lbl">🍽 Floor Plan — ${tableNos.length} Tables</div>
+    ${statsHtml}
+    <div class="floor-plan-wrap">
+      <svg class="floor-plan-svg" viewBox="0 0 ${SVG_W} ${SVG_H}" xmlns="http://www.w3.org/2000/svg">
+        ${tableSvgs}
+        <line x1="${PAD}" y1="${SVG_H-4}" x2="${SVG_W/2-16}" y2="${SVG_H-4}" stroke="#3a2510" stroke-width="1.5" stroke-dasharray="3,3"/>
+        <line x1="${SVG_W/2+16}" y1="${SVG_H-4}" x2="${SVG_W-PAD}" y2="${SVG_H-4}" stroke="#3a2510" stroke-width="1.5" stroke-dasharray="3,3"/>
+        <text x="${SVG_W/2}" y="${SVG_H-3}" text-anchor="middle" dominant-baseline="central" font-size="6" fill="#3a2510" font-family="-apple-system,sans-serif" letter-spacing="1" font-weight="600">ENTRANCE</text>
+      </svg>
+    </div>`;
+  }
+
+  // ================================================================
+  // STAFF DASHBOARD — table bottom sheet
+  // ================================================================
+  function staffTableSheetView(r, tableNo) {
+    const orders = state.orders.filter(o => o.restaurantSlug === r.slug && o.table === tableNo && o.status !== "completed");
+    const grandTotal = orders.reduce((s, o) => s + o.total, 0);
+    const allPaid = orders.length > 0 && orders.every(o => o.paymentStatus === "paid" || o.paymentStatus === "cash_accepted");
+    const anyWaiting = orders.some(o => o.paymentStatus === "waiting");
+    const anyCashPending = orders.some(o => o.paymentStatus === "cash_pending");
+    const anyCashSent = orders.some(o => o.paymentStatus === "cash_sent");
+    const hasAlert = orders.some(o => o.waiterRequest);
+    const orderIds = orders.map(o => o.id).join(",");
+    const waitingIds = orders.filter(o=>o.paymentStatus==="waiting").map(o=>o.id).join(",");
+    const cashPendingIds = orders.filter(o=>o.paymentStatus==="cash_pending").map(o=>o.id).join(",");
+    const cashSentIds = orders.filter(o=>o.paymentStatus==="cash_sent").map(o=>o.id).join(",");
+
+    const merged = [];
+    orders.forEach(o => {
+      (o.items||[]).forEach(i=>{ const e=merged.find(x=>x.id===i.id); if(e) e.qty+=i.qty; else merged.push({...i}); });
+      (o.addons||[]).forEach(a=>{ const e=merged.find(x=>x._aid===a.id); if(e) e.qty+=(a.qty||1); else merged.push({id:"a_"+a.id,_aid:a.id,name:"+ "+a.name,price:a.price,qty:a.qty||1}); });
+    });
+
+    const statusPill = orders.length===0 ? `<span class="spill gray">Free</span>`
+      : allPaid ? `<span class="spill green">✓ Paid</span>`
+      : anyCashSent ? `<span class="spill blue">In Kitchen</span>`
+      : anyCashPending ? `<span class="spill amber">Cash — at counter</span>`
+      : `<span class="spill amber">Payment pending</span>`;
+
+    return `<div class="tbl-sheet-bg" data-action="staff-close-sheet">
+      <div class="tbl-sheet" onclick="event.stopPropagation()">
+        <div class="tbl-sheet-handle"></div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+          <div><div style="font-size:26px;font-weight:800;color:#2a1a0e">Table ${tableNo}</div><div style="margin-top:4px">${statusPill}</div></div>
+          <button class="sbtn plain" style="flex:none;padding:8px 12px;font-size:13px" data-action="staff-close-sheet">Close</button>
+        </div>
+        ${hasAlert ? `<div style="background:#fff0ee;border:1.5px solid #e74c3c;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+          <div><div style="font-size:13px;font-weight:700;color:#c0392b">${orders.find(o=>o.waiterRequest)?.waiterRequest==="bill"?"💳 Bill requested":"🔔 Waiter called"}</div><div style="font-size:12px;color:#9a8878;margin-top:2px">Customer needs attention</div></div>
+          <button class="sbtn plain" style="flex:none;font-size:12px;padding:7px 12px" data-action="staff-dismiss-table-alert" data-ids="${orderIds}">Dismiss</button>
+        </div>` : ""}
+        ${orders.length===0
+          ? `<div class="staff-empty" style="padding:24px"><div class="se-icon">🪑</div>Table is free</div>`
+          : `<div style="margin-bottom:14px">
+              ${merged.map(i=>`<div style="display:flex;justify-content:space-between;font-size:14px;padding:4px 0">${esc(i.name)} × ${i.qty}<span>${money(i.price*i.qty)}</span></div>`).join("")}
+              <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:1px solid #e8dcc8;padding-top:8px;margin-top:4px"><span>Total</span><span>${money(grandTotal)}</span></div>
+            </div>`}
+        <div style="display:flex;flex-direction:column;gap:9px;margin-top:16px">
+          ${anyWaiting ? `<button class="sbtn ok" data-action="staff-confirm-upi" data-ids="${waitingIds}">✓ UPI Payment Received</button>` : ""}
+          ${anyCashPending ? `<button class="sbtn primary" data-action="staff-send-cash-kitchen" data-ids="${cashPendingIds}">🍳 Send to Kitchen (Cash)</button>` : ""}
+          ${anyCashSent ? `<button class="sbtn ok" data-action="staff-confirm-cash" data-ids="${cashSentIds}">💵 Cash Received</button>` : ""}
+          ${allPaid && orders.length>0 ? `<button class="sbtn danger" data-action="staff-close-table" data-ids="${orderIds}">🔒 Close Table & Free Seat</button>` : ""}
+          ${orders.length>0 ? `<button class="sbtn plain" data-action="print-table-bill" data-ids="${orderIds}">🧾 Print Bill</button>` : ""}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ================================================================
+  // STAFF DASHBOARD — kitchen view
+  // ================================================================
+  function staffKitchenView(r) {
+    const orders = state.orders.filter(o =>
+      o.restaurantSlug === r.slug &&
+      (o.paymentStatus==="paid" || o.paymentStatus==="cash_sent" || o.paymentStatus==="cash_accepted") &&
+      o.status !== "completed" && o.status !== "delivered"
+    ).sort((a, b) => { const rank={pending:0,preparing:1,ready:2}; return (rank[a.status]??3)-(rank[b.status]??3)||a.createdAt-b.createdAt; });
+
+    if (!orders.length) return `<div class="staff-empty"><div class="se-icon">🍳</div>No orders to prepare right now</div>`;
+
+    return orders.map(o => {
+      const next = o.status==="pending"?"preparing":o.status==="preparing"?"ready":"delivered";
+      const elapsed = Math.floor((Date.now()-o.createdAt)/60000);
+      const borderColor = elapsed>15?"#e74c3c":elapsed>8?"#f39c12":"#27ae60";
+      const pill = o.status==="preparing" ? `<span class="spill blue">Preparing</span>` : o.status==="ready" ? `<span class="spill green">Ready</span>` : `<span class="spill amber">Pending</span>`;
+      return `<div class="s-order-card" style="border-left:4px solid ${borderColor}">
+        <div class="oc-head"><div><div class="oc-table">Table ${o.table}</div><div class="oc-id">#${o.id.slice(-5).toUpperCase()} · ${elapsed} min ago</div></div>${pill}</div>
+        <div class="oc-items">
+          ${(o.items||[]).map(i=>`<div class="oc-item-row"><span style="font-weight:600">${esc(i.name)} <span style="color:#9a8878">× ${i.qty}</span></span></div>`).join("")}
+          ${(o.addons||[]).map(a=>`<div class="oc-item-row" style="color:#9a8878"><span>+ ${esc(a.name)} × ${a.qty||1}</span></div>`).join("")}
+        </div>
+        ${o.note?`<div class="oc-note">📝 ${esc(o.note)}</div>`:""}
+        <div class="oc-actions">
+          ${next==="delivered"
+            ?`<button class="sbtn ok" data-action="advance-order" data-id="${o.id}" data-next="${next}">✅ Mark Served</button>`
+            :`<button class="sbtn primary" data-action="advance-order" data-id="${o.id}" data-next="${next}">${next==="preparing"?"👨‍🍳 Start Preparing":"🛎 Mark Ready"}</button>`}
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  // ================================================================
+  // STAFF DASHBOARD — billing view
+  // ================================================================
+  function staffBillingView(r) {
+    const active = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
+    const tableMap = {};
+    active.forEach(o => { if(!tableMap[o.table]) tableMap[o.table]=[]; tableMap[o.table].push(o); });
+    const tableGroups = Object.entries(tableMap).sort((a,b)=>Number(a[0])-Number(b[0]));
+
+    if (!tableGroups.length) return `<div class="staff-empty"><div class="se-icon">💳</div>No active bills right now</div>`;
+
+    return tableGroups.map(([table, orders]) => {
+      const grandTotal = orders.reduce((s,o)=>s+o.total,0);
+      const allPaid = orders.every(o=>o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted");
+      const anyWaiting = orders.some(o=>o.paymentStatus==="waiting");
+      const anyCashPending = orders.some(o=>o.paymentStatus==="cash_pending");
+      const anyCashSent = orders.some(o=>o.paymentStatus==="cash_sent");
+      const orderIds = orders.map(o=>o.id).join(",");
+      const waitingIds = orders.filter(o=>o.paymentStatus==="waiting").map(o=>o.id).join(",");
+      const cashPendingIds = orders.filter(o=>o.paymentStatus==="cash_pending").map(o=>o.id).join(",");
+      const cashSentIds = orders.filter(o=>o.paymentStatus==="cash_sent").map(o=>o.id).join(",");
+
+      const merged = [];
+      orders.forEach(o => {
+        (o.items||[]).forEach(i=>{ const e=merged.find(x=>x.id===i.id); if(e) e.qty+=i.qty; else merged.push({...i}); });
+        (o.addons||[]).forEach(a=>{ const e=merged.find(x=>x._aid===a.id); if(e) e.qty+=(a.qty||1); else merged.push({id:"a_"+a.id,_aid:a.id,name:"+ "+a.name,price:a.price,qty:a.qty||1}); });
+      });
+
+      const borderColor = allPaid?"#27ae60":anyCashSent?"#2980b9":"#c4a96a";
+      const statusLabel = allPaid?`<span class="spill green">✓ Paid</span>`:anyCashSent?`<span class="spill blue">In Kitchen</span>`:anyCashPending?`<span class="spill amber">Cash pending</span>`:`<span class="spill amber">Payment check</span>`;
+
+      return `<div class="s-order-card" style="border-left:4px solid ${borderColor}">
+        <div class="oc-head"><div><div class="oc-table">Table ${table}</div><div class="oc-id">${orders.length} order${orders.length>1?"s":""} · since ${new Date(orders[0].createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div></div>${statusLabel}</div>
+        <div class="oc-items">${merged.map(i=>`<div class="oc-item-row"><span>${esc(i.name)} × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join("")}</div>
+        <div class="oc-total"><span>Total</span><span>${money(grandTotal)}</span></div>
+        <div class="oc-actions">
+          ${anyWaiting?`<button class="sbtn ok" data-action="staff-confirm-upi" data-ids="${waitingIds}">✓ UPI Paid</button>`:""}
+          ${anyCashPending?`<button class="sbtn primary" data-action="staff-send-cash-kitchen" data-ids="${cashPendingIds}">🍳 Send to Kitchen</button>`:""}
+          ${anyCashSent?`<button class="sbtn ok" data-action="staff-confirm-cash" data-ids="${cashSentIds}">💵 Cash Received</button>`:""}
+          ${allPaid?`<button class="sbtn danger" data-action="staff-close-table" data-ids="${orderIds}">🔒 Close Table</button>`:""}
+          <button class="sbtn plain" data-action="print-table-bill" data-ids="${orderIds}">🧾 Bill</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+  // ================================================================
+  // END STAFF DASHBOARD VIEWS
+  // ================================================================
+
   function settingsPanel(r) {
+    const masterKey = (function generateMasterKey(slug) {
+      const raw = slug + "_staff_2024";
+      let h = 0;
+      for (let i = 0; i < raw.length; i++) h = (Math.imul(31, h) + raw.charCodeAt(i)) | 0;
+      return "STF-" + Math.abs(h).toString(16).toUpperCase().padStart(6, "0");
+    })(r.slug);
     return `
       <section class="card" style="max-width:640px">
         <div class="section-head"><div><h2>Restaurant Settings</h2><p>These details show to customers.</p></div></div>
@@ -1202,8 +1703,28 @@
           ${field("Google Review Link", "set-review", "input", r.googleReviewUrl || "")}
         </div>
         ${field("Payment QR Image URL", "set-qr", "input", r.paymentQr || DEFAULT_QR)}
+        <div class="field">
+          <label>Total Tables in Restaurant</label>
+          <input id="set-table-count" type="number" min="1" max="100" value="${r.tableCount || r.tables.length || 4}" placeholder="e.g. 12" style="max-width:160px">
+          <p class="muted small" style="margin:4px 0 0">Staff dashboard will display this many tables in the floor plan.</p>
+        </div>
         <button class="btn primary" data-action="save-settings" data-slug="${r.slug}">Save Settings</button>
         <button class="btn" data-action="owner-logout" data-slug="${r.slug}">Logout</button>
+      </section>
+
+      <section class="card" style="max-width:640px;margin-top:14px">
+        <div class="section-head">
+          <div>
+            <h2>Staff Dashboard</h2>
+            <p>Share the master key below with your staff so they can access the live floor plan, kitchen, and billing views.</p>
+          </div>
+        </div>
+        <div style="background:#2a1a0e;color:#c4a96a;font-size:24px;font-weight:800;letter-spacing:.15em;text-align:center;border-radius:12px;padding:18px;font-family:monospace;margin:12px 0;border:2px solid #4a2f18">${masterKey}</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <a href="#/staff?resto=${r.slug}" style="flex:1;display:block;padding:12px;border-radius:10px;background:#c4a96a;color:#2a1a0e;font-weight:700;font-size:14px;text-align:center;text-decoration:none">🛎 Open Staff Dashboard</a>
+          <button onclick="navigator.clipboard?.writeText('${masterKey}').then(()=>{var t=document.getElementById('toast');t.textContent='Key copied!';t.hidden=false;clearTimeout(t._t);t._t=setTimeout(()=>t.hidden=true,2400);})" style="flex:1;padding:12px;border-radius:10px;border:1.5px solid #e8dcc8;background:#faf5ec;color:#5a4030;font-weight:700;font-size:14px;cursor:pointer">📋 Copy Key</button>
+        </div>
+        <p class="muted small" style="margin:10px 0 0">⚠ Share this key only with trusted staff. It grants access to order management.</p>
       </section>`;
   }
 
@@ -1648,6 +2169,40 @@
     if (action === "reprint-bill") return printReceipt(el.dataset.id);
     if (action === "print-table-bill") return printTableBill(el.dataset.ids.split(","));
     if (action === "advance-order") return updateOrder(el.dataset.id, o => o.status = el.dataset.next);
+    // ── Staff Dashboard actions ──────────────────────────────────────
+    if (action === "staff-select-role") { staffSelectedRole = el.dataset.role; return render(); }
+    if (action === "staff-login") {
+      const input = document.getElementById("staff-key-input");
+      const entered = (input ? input.value : "").trim().toUpperCase();
+      const loginSlug = el.dataset.slug;
+      if (entered === generateMasterKey(loginSlug)) {
+        localStorage.setItem(staffKeyFor(loginSlug), "yes");
+        localStorage.setItem("restoqr_staff_role_" + loginSlug, staffSelectedRole);
+        toast("Welcome! Logged in as " + staffSelectedRole);
+        return render();
+      } else {
+        toast("Wrong key — check with your manager");
+        if (input) { input.style.borderColor = "#e74c3c"; setTimeout(() => input.style.borderColor = "", 2000); }
+        return;
+      }
+    }
+    if (action === "staff-logout") {
+      localStorage.removeItem(staffKeyFor(el.dataset.slug));
+      localStorage.removeItem("restoqr_staff_role_" + el.dataset.slug);
+      staffSheetTable = null;
+      return render();
+    }
+    if (action === "staff-tab") { staffTab = el.dataset.tab; staffSheetTable = null; return render(); }
+    if (action === "staff-open-table") { staffSheetTable = Number(el.dataset.table); return render(); }
+    if (action === "staff-close-sheet") { staffSheetTable = null; return render(); }
+    if (action === "staff-dismiss-waiter") { return updateOrder(el.dataset.id, o => { delete o.waiterRequest; }); }
+    if (action === "staff-dismiss-table-alert") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { delete o.waiterRequest; })); return; }
+    if (action === "staff-confirm-upi") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { o.paymentStatus = "paid"; o.status = "pending"; })); return toast("✅ UPI payment confirmed"); }
+    if (action === "staff-send-cash-kitchen") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { if (o.paymentStatus==="cash_pending") { o.paymentStatus="cash_sent"; o.status="pending"; } })); return toast("🍳 Sent to kitchen"); }
+    if (action === "staff-confirm-cash") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { if (o.paymentStatus==="cash_sent") o.paymentStatus="cash_accepted"; })); return toast("💵 Cash received"); }
+    if (action === "staff-close-table") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => o.status="completed")); staffSheetTable=null; return toast("🔒 Table closed"); }
+    // ── End Staff Dashboard actions ──────────────────────────────────
+
     if (action === "toggle-sound") {
       soundEnabled = !soundEnabled;
       localStorage.setItem("restoqr_sound_off", soundEnabled ? "no" : "yes");
@@ -1737,6 +2292,8 @@
       r.upiId = val("set-upiid");
       r.googleReviewUrl = val("set-review") || "";
       r.paymentQr = val("set-qr") || DEFAULT_QR;
+      const tc = Number(val("set-table-count"));
+      if (tc > 0) r.tableCount = tc;
     });
   }
 
@@ -1926,6 +2483,7 @@
         ${r ? `<button class="btn" data-action="toggle-sound" title="${soundEnabled ? "Mute new-order alerts" : "Unmute new-order alerts"}" style="display:inline-flex;align-items:center;padding:8px 10px;font-size:16px">${soundEnabled ? "🔔" : "🔕"}</button>` : ""}
         <a class="btn ${active === "register" ? "primary" : ""}" href="#/register">Register</a>
         <a class="btn ${active === "owner" ? "primary" : ""}" href="#/owner${r ? "?resto=" + r.slug : ""}">Owner</a>
+        <a class="btn ${active === "staff" ? "primary" : ""}" href="#/staff${r ? "?resto=" + r.slug : "?resto=" + (state.restaurants[0]?.slug || "")}">Staff</a>
         <a class="btn ${active === "admin" ? "primary" : ""}" href="#/admin">Admin</a>
       </nav>
     </div></header>`;

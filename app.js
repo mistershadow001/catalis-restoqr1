@@ -13,6 +13,32 @@
   let selectedAddons = {}; // addonId -> true
   let billingDateFilter = new Date().toISOString().slice(0, 10); // YYYY-MM-DD, default today
 
+  // ---- New Order Alert Sound ----
+  let soundEnabled = localStorage.getItem("restoqr_sound_off") !== "yes";
+  let audioCtx = null;
+  let seenOrderIds = new Set();
+  let seenOrdersInitialized = false;
+
+  // ---- Reprint Bill: print-only receipt styles (self-contained, no external CSS needed) ----
+  (function injectReceiptPrintStyles() {
+    const style = document.createElement("style");
+    style.textContent = `
+      #print-receipt-holder { display: none; }
+      @media print {
+        body.printing-receipt > *:not(#print-receipt-holder) { display: none !important; }
+        body.printing-receipt #print-receipt-holder { display: block !important; }
+        #print-receipt-holder .receipt { width: 300px; margin: 0 auto; font-family: 'Courier New', monospace; color: #000; }
+        #print-receipt-holder .receipt h2 { margin: 0 0 4px; font-size: 16px; text-align: center; }
+        #print-receipt-holder .receipt p { margin: 2px 0; font-size: 12px; text-align: center; }
+        #print-receipt-holder .receipt table { width: 100%; margin-top: 8px; border-collapse: collapse; }
+        #print-receipt-holder .receipt th, #print-receipt-holder .receipt td { padding: 2px 4px; font-size: 12px; }
+        #print-receipt-holder .receipt hr { border: none; border-top: 1px dashed #000; margin: 8px 0; }
+        #print-receipt-holder .receipt .receipt-total { display: flex; justify-content: space-between; font-weight: 700; font-size: 14px; text-align: left; }
+      }
+    `;
+    document.head.appendChild(style);
+  })();
+
   const COMMON_ITEMS = [
     ["Paneer Tikka", "Starters", 220, true], ["Chicken 65", "Starters", 280, false], ["Veg Manchurian", "Starters", 180, true],
     ["Masala Papad", "Starters", 60, true], ["French Fries", "Starters", 120, true], ["Dal Fry", "Main Course", 170, true],
@@ -83,13 +109,18 @@
       db = firebase.database().ref("restoqr");
       db.on("value", snap => {
         const value = snap.val();
-        if (value && value.restaurants) state = normalizeState(value);
+        if (value && value.restaurants) {
+          const normalized = normalizeState(value);
+          checkNewOrders(normalized);
+          state = normalized;
+        }
         else save(seed());
         render();
       });
     } else {
       try { state = JSON.parse(localStorage.getItem(KEY)) || state; } catch {}
       state = normalizeState(state);
+      checkNewOrders(state);
       render();
     }
     window.addEventListener("hashchange", () => {
@@ -113,6 +144,7 @@
       r.googleReviewUrl = r.googleReviewUrl || "";
       r.upiName = r.upiName || r.owner || r.name;
       r.upiId = r.upiId || "";
+      r.couponCode = r.couponCode || "";
       r.tables = r.tables || [];
       r.menu = r.menu || [];
       r.addons = r.addons || [];
@@ -123,6 +155,7 @@
 
   function save(next) {
     state = clone(next || state);
+    checkNewOrders(state);
     if (firebaseMode && db) db.set(state);
     else localStorage.setItem(KEY, JSON.stringify(state));
     render();
@@ -138,6 +171,64 @@
     const raw = location.hash || "#/";
     const [path, qs = ""] = raw.replace(/^#/, "").split("?");
     return { path: path || "/", params: new URLSearchParams(qs) };
+  }
+
+  // ---- New Order Alert Sound: detection + chime ----
+
+  function currentOwnerSlugIfAny() {
+    const r = route();
+    if (r.path !== "/owner") return null;
+    const slug = r.params.get("resto") || localStorage.getItem("restoqr_owner_slug") || "";
+    if (slug && localStorage.getItem("restoqr_owner_" + slug) === "yes") return slug;
+    return null;
+  }
+
+  function ensureAudioCtx() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; }
+    }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+
+  function playOrderAlertSound() {
+    if (!soundEnabled) return;
+    const ctx = ensureAudioCtx();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [0, 0.22, 0.44].forEach((t, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = i % 2 === 0 ? 880 : 660;
+      gain.gain.setValueAtTime(0, now + t);
+      gain.gain.linearRampToValueAtTime(0.35, now + t + 0.02);
+      gain.gain.linearRampToValueAtTime(0, now + t + 0.18);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now + t);
+      osc.stop(now + t + 0.2);
+    });
+  }
+
+  // Compares incoming order list against what we've already seen and, if the
+  // owner currently has that restaurant's panel open, plays a chime + toast.
+  function checkNewOrders(nextState) {
+    const incoming = new Set((nextState.orders || []).map(o => o.id));
+    if (!seenOrdersInitialized) {
+      seenOrderIds = incoming;
+      seenOrdersInitialized = true;
+      return;
+    }
+    const newOnes = (nextState.orders || []).filter(o => !seenOrderIds.has(o.id));
+    seenOrderIds = incoming;
+    if (!newOnes.length) return;
+    const slug = currentOwnerSlugIfAny();
+    if (!slug) return;
+    const relevant = newOnes.filter(o => o.restaurantSlug === slug);
+    if (relevant.length) {
+      playOrderAlertSound();
+      relevant.forEach(o => toast("🔔 New order — Table " + o.table));
+    }
   }
 
   function render() {
@@ -189,6 +280,7 @@
     const today = state.orders.filter(o => sameDay(o.createdAt, Date.now()));
     return `
       ${topbar("home")}
+      
       <main class="hero">
         <div class="hero-inner">
           <section>
@@ -236,9 +328,9 @@
       <main class="wrap">
         <div class="culture-banner" style="margin:0 0 26px">
           <div class="culture-banner-inner" style="padding:36px 24px 30px">
-            <p class="kicker">Get started</p
-            <h2 style="font-size:clamp(22px,3vw,30px)">Bring your restaurant onto RestoQR</h2>
-            <p class="sub">Pay the one-time setup on PhonePe, and our team activates your QR ordering  </p>
+            <p class="kicker">Get started</p>
+            <h2 style="font-size:clamp(22px,3vw,30px)">Bring your restaurant onto RestoQR at just ₹999</h2>
+            <p class="sub">Pay the one-time fee for entire month </p>
           </div>
         </div>
         <div class="split">
@@ -253,6 +345,7 @@
               ${field("UPI ID (VPA)", "reg-upiid", "input", "name@upi or 9999999999@paytm")}
               ${field("UPI Display Name", "reg-upi", "input", "Shown under payment QR")}
               ${field("Google Review Link", "reg-review", "input", "Paste Google review link")}
+              ${field("Coupon Code", "reg-coupon", "input", "Optional — have a code?")}
             </div>
             <button class="btn primary" data-action="register">Submit Registration</button>
           </section>
@@ -286,7 +379,37 @@
             
           </aside>
         </div>
-      </main>`;
+      </main>
+
+      <button type="button" onclick="document.getElementById('coupon-modal-overlay').style.display='flex';setTimeout(function(){var i=document.getElementById('coupon-modal-input'); if(i) i.focus();},50)"
+        style="position:fixed;bottom:24px;right:24px;z-index:200;display:flex;align-items:center;gap:8px;background:#1a1a1a;color:#fff;border:none;border-radius:999px;padding:13px 22px;font-weight:700;font-size:14px;cursor:pointer;box-shadow:0 12px 28px rgba(0,0,0,.25)">
+        🎟 Add Coupon
+      </button>
+
+      <div id="coupon-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,12,10,.55);z-index:300;align-items:center;justify-content:center;padding:16px">
+        <div style="background:#fff;border-radius:16px;padding:28px 26px 24px;max-width:360px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.3);position:relative;font-family:inherit">
+          <button type="button" onclick="document.getElementById('coupon-modal-overlay').style.display='none'"
+            style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:18px;line-height:1;cursor:pointer;color:#9ca3af">✕</button>
+          <div style="font-size:30px;margin-bottom:8px">🎟</div>
+          <h3 style="margin:0 0 4px;font-size:18px;color:#1a1a1a">Have a Coupon Code?</h3>
+          <p style="margin:0 0 16px;font-size:13px;color:#6b7280;line-height:1.4">Enter it below — we'll add it to your registration form automatically.</p>
+          <input id="coupon-modal-input" placeholder="e.g. LAUNCH999" autocomplete="off"
+            style="width:100%;box-sizing:border-box;padding:11px 12px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:14px"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.nextElementSibling.click();}">
+          <button type="button" class="btn primary block" style="width:100%;padding:12px;border-radius:10px;font-weight:700" onclick="(function(){
+              var input=document.getElementById('coupon-modal-input');
+              var code=(input.value||'').trim().toUpperCase();
+              if(!code){ input.style.border='1.5px solid #c93333'; input.focus(); return; }
+              var target=document.getElementById('reg-coupon');
+              if(target) target.value=code;
+              document.getElementById('coupon-modal-overlay').style.display='none';
+              input.value=''; input.style.border='';
+              var t=document.getElementById('toast');
+              if(t){ t.textContent='🎟 Coupon '+code+' applied to your registration'; t.hidden=false; clearTimeout(t._ct); t._ct=setTimeout(function(){t.hidden=true;},2400); }
+              if(target){ target.style.transition='border-color .3s'; target.style.border='1.5px solid #2e7d32'; setTimeout(function(){target.style.border='';},1500); }
+            })()">Apply Coupon</button>
+        </div>
+      </div>`;
   }
 
   function adminView() {
@@ -333,10 +456,11 @@
             <span class="pill ${r.active ? "ok" : "bad"}">${r.active ? "Active" : "Inactive"}</span>
             <span class="pill ${r.qrEnabled ? "blue" : "neutral"}">QR ${r.qrEnabled ? "On" : "Off"}</span>
             <span class="pill ${left > 5 ? "ok" : left > 0 ? "warn" : "bad"}">${left > 0 ? left + " days left" : "Expired"}</span>
+            ${r.couponCode ? `<span class="pill warn">🎟 ${esc(r.couponCode)}</span>` : ""}
           </div>
         </div>
         <div class="row" style="margin-top:12px; flex-wrap:wrap">
-          <span class="muted small">${orders.length} orders · Owner PIN ${esc(r.ownerPin)}</span>
+          <span class="muted small">${orders.length} orders · Owner PIN ${esc(r.ownerPin)}${r.couponCode ? ` · Coupon used: <strong>${esc(r.couponCode)}</strong>` : ""}</span>
           <div class="row-left">
             <button class="btn ${r.active ? "bad" : "ok"}" data-action="toggle-active" data-slug="${r.slug}">${r.active ? "Deactivate" : "Activate"}</button>
             <button class="btn" data-action="toggle-qr" data-slug="${r.slug}">${r.qrEnabled ? "Disable QR" : "Enable QR"}</button>
@@ -549,8 +673,15 @@
   }
 
   function kitchenPanel(r) {
-    const orders = state.orders.filter(o => o.restaurantSlug === r.slug && (o.paymentStatus === "paid" || o.paymentStatus === "cash_accepted") && o.status !== "completed");
-    return `<section class="card"><div class="section-head"><div><h2>Kitchen</h2><p>Paid & cash-accepted orders appear here for preparation.</p></div></div>${orders.map(o => orderCard(o)).join("") || empty("No active kitchen orders")}</section>`;
+    const orders = state.orders.filter(o => o.restaurantSlug === r.slug && (o.paymentStatus === "paid" || o.paymentStatus === "cash_sent" || o.paymentStatus === "cash_accepted") && o.status !== "completed" && o.status !== "delivered");
+    return `<section class="card">
+      <div class="section-head"><div><h2>Kitchen</h2><p>Paid & cash-accepted orders appear here for preparation.</p></div></div>
+      <div class="order-scroll-wrap">
+        <div class="order-scroll">
+          ${orders.map(o => orderCard(o)).join("") || empty("No active kitchen orders")}
+        </div>
+      </div>
+    </section>`;
   }
 
   function billingPanel(r) {
@@ -580,7 +711,11 @@
     return `
       <section class="card">
         <div class="section-head"><div><h2>Billing Counter</h2><p>Verify PhonePe payments, accept cash, and close tables.</p></div></div>
-        ${active.map(billCard).join("") || empty("No active bills")}
+        <div class="order-scroll-wrap">
+          <div class="order-scroll">
+            ${active.map(billCard).join("") || empty("No active bills")}
+          </div>
+        </div>
       </section>
 
       <section class="card" style="margin-top:14px">
@@ -588,27 +723,36 @@
           <div><h2>Closed Orders</h2><p>All completed orders — filter by date for verification.</p></div>
         </div>
 
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-          <label style="font-size:13px;font-weight:600;color:var(--muted,#6b7280)">Filter by date:</label>
-          <select id="billing-date-filter" onchange="window._setBillingDate(this.value)"
-            style="padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:14px;background:var(--card,#fff)">
-            <option value="">All Time</option>
-            ${uniqueDates.map(d => {
-              const label = new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-              return '<option value="' + d + '" ' + (d === billingDateFilter ? 'selected' : '') + '>' + label + '</option>';
-            }).join("")}
-          </select>
-          ${billingDateFilter ? `<button class="btn" style="font-size:12px;padding:6px 10px" onclick="window._setBillingDate('')">Clear</button>` : ""}
+        <div class="billing-filter-bar">
+          <label>Filter by date:</label>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <input type="date" id="billing-date-picker" value="${billingDateFilter}"
+              data-action="billing-date-pick"
+              style="padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:14px;background:var(--card,#fff);color:var(--text,#1a1a1a);cursor:pointer">
+            <select id="billing-date-filter" data-action="billing-date-select"
+              style="padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:14px;background:var(--card,#fff)">
+              <option value="">All Time</option>
+              ${uniqueDates.map(d => {
+                const label = new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                return '<option value="' + d + '" ' + (d === billingDateFilter ? 'selected' : '') + '>' + label + '</option>';
+              }).join("")}
+            </select>
+            ${billingDateFilter ? `<button class="btn" style="font-size:12px;padding:6px 10px" data-action="billing-date-clear">✕ Clear</button>` : ""}
+          </div>
         </div>
 
         ${filtered.length ? `
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-            <div class="stat" style="min-width:120px"><p>🔵 UPI Collected</p><strong>${filtered.filter(o => o.paymentStatus === "paid").length} orders · ₹${upiTotal.toLocaleString("en-IN")}</strong></div>
-            <div class="stat" style="min-width:120px"><p>💵 Cash Collected</p><strong>${filtered.filter(o => o.paymentStatus === "cash_accepted").length} orders · ₹${cashTotal.toLocaleString("en-IN")}</strong></div>
-            <div class="stat" style="min-width:120px"><p>📦 Total Orders</p><strong>${filtered.length} · ₹${(upiTotal + cashTotal).toLocaleString("en-IN")}</strong></div>
+          <div class="billing-summary">
+            <div class="stat"><p>🔵 UPI Collected</p><strong>${filtered.filter(o => o.paymentStatus === "paid").length} orders · ₹${upiTotal.toLocaleString("en-IN")}</strong></div>
+            <div class="stat"><p>💵 Cash Collected</p><strong>${filtered.filter(o => o.paymentStatus === "cash_accepted").length} orders · ₹${cashTotal.toLocaleString("en-IN")}</strong></div>
+            <div class="stat"><p>📦 Total Orders</p><strong>${filtered.length} · ₹${(upiTotal + cashTotal).toLocaleString("en-IN")}</strong></div>
           </div>
-          ${filtered.map(billCardClosed).join("")}
-        ` : empty("No closed orders for " + dateLabel)}
+          <div class="order-scroll-wrap">
+            <div class="order-scroll closed">
+              ${filtered.map(billCardClosed).join("")}
+            </div>
+          </div>
+        ` : empty(billingDateFilter ? "No closed orders for " + dateLabel : "No closed orders yet")}
       </section>`;
   }
 
@@ -661,8 +805,9 @@
     }
     const table = Number(params.get("table")) || "";
     const lastOrder = state.orders.find(o => o.id === localStorage.getItem("restoqr_last_order_" + r.slug));
-    // If there's an active (non-completed) order, show the order tracking view
-    if (lastOrder && lastOrder.status !== "completed") {
+    // Once the kitchen marks the order delivered (or billing later closes it), show the
+    // completed/review screen instead of the live tracking view.
+    if (lastOrder && lastOrder.status !== "completed" && lastOrder.status !== "delivered") {
       return customerShell(r.name, customerOrderTrackingView(r, lastOrder));
     }
     if (!customerCat) customerCat = r.categories[0] || unique(r.menu.map(i => i.category))[0] || "";
@@ -675,7 +820,7 @@
           <span class="muted">Table number</span>
           <input class="table-box" id="customer-table" value="${table}" type="number" min="1">
         </div>
-        ${lastOrder && lastOrder.status === "completed" ? customerStatusCard(r, lastOrder) : ""}
+        ${lastOrder && (lastOrder.status === "completed" || lastOrder.status === "delivered") ? customerStatusCard(r, lastOrder) : ""}
         <div class="cat-strip">${unique(r.menu.map(i => i.category)).map(c => `<button class="${c === customerCat ? "active" : ""}" data-action="customer-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
         <div style="padding-bottom:${(cartCount() || addonCartCount()) ? "160px" : "80px"}">
           ${items.map(i => customerItem(r, i)).join("") || empty("No items available")}
@@ -825,8 +970,9 @@
         </div>
 
         <p style="text-align:center;font-size:13px;color:var(--muted,#6b7280);margin:0 0 16px">
-          ${o.paymentStatus === "cash_pending" ? "💵 Please pay cash at the billing counter. Waiting for acceptance..." :
-            o.paymentStatus === "cash_accepted" ? "✅ Cash accepted by counter. Order sent to kitchen!" :
+          ${o.paymentStatus === "cash_pending" ? "💵 Please pay cash at the billing counter. Waiting for counter..." :
+            o.paymentStatus === "cash_sent" ? "✅ Counter sent your order to kitchen! Please pay cash when served." :
+            o.paymentStatus === "cash_accepted" ? "✅ Cash received. Enjoy your meal!" :
             o.paymentStatus === "waiting" ? "⏳ Waiting for payment verification by counter..." :
             o.status === "preparing" ? "👨‍🍳 Your food is being prepared!" :
             o.status === "ready" ? "🛎 Your order is ready! Counter will serve you shortly." : "✅ Payment verified. Order confirmed!"}
@@ -848,7 +994,7 @@
   }
 
   function customerStatusCard(r, o) {
-    const delivered = o.status === "completed";
+    const delivered = o.status === "completed" || o.status === "delivered";
     const label = delivered ? "Delivered" : title(o.paymentStatus === "waiting" ? "payment check" : o.status);
     return `<div class="review-card">
       <div class="row">
@@ -865,43 +1011,100 @@
   }
 
   function orderCard(o) {
-    const next = o.status === "pending" ? "preparing" : o.status === "preparing" ? "ready" : "completed";
+    const next = o.status === "pending" ? "preparing" : o.status === "preparing" ? "ready" : "delivered";
     return `<div class="list-item">
       <div class="row"><div><strong>Table ${o.table}</strong><p class="muted small">#${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p></div><span class="pill blue">${title(o.status)}</span></div>
       ${orderLines(o)}
       ${o.note ? `<p class="pill warn">Note: ${esc(o.note)}</p>` : ""}
-      <div class="row" style="margin-top:10px"><strong>${money(o.total)}</strong><button class="btn ok" data-action="advance-order" data-id="${o.id}" data-next="${next}">${next === "completed" ? "Complete" : "Mark " + title(next)}</button></div>
+      <div class="row" style="margin-top:10px"><strong>${money(o.total)}</strong><button class="btn ok" data-action="advance-order" data-id="${o.id}" data-next="${next}">${next === "delivered" ? "✅ Mark Delivered" : "Mark " + title(next)}</button></div>
     </div>`;
   }
 
   function billCard(o) {
-    const isCash = o.paymentStatus === "cash_pending";
+    const isCashPending = o.paymentStatus === "cash_pending";
+    const isCashSent = o.paymentStatus === "cash_sent";
     const isCashAccepted = o.paymentStatus === "cash_accepted";
     const isPaid = o.paymentStatus === "paid";
-    const pillClass = isPaid || isCashAccepted ? "ok" : isCash ? "warn" : "warn";
-    const pillLabel = isPaid ? "UPI Paid" : isCashAccepted ? "Cash Accepted" : isCash ? "💵 Cash – Pending" : "Check Payment";
-    return `<div class="list-item" style="${isCash ? "border-left:3px solid #c4a96a" : ""}">
-      <div class="row"><div><strong>Table ${o.table}</strong><p class="muted small">Order #${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p></div><span class="pill ${pillClass}">${pillLabel}</span></div>
+    const pillClass = isPaid || isCashAccepted ? "ok" : isCashSent ? "blue" : "warn";
+    const pillLabel = isPaid ? "UPI Paid" : isCashAccepted ? "💵 Cash Received" : isCashSent ? "🍳 In Kitchen – Cash Due" : isCashPending ? "💵 Cash – Awaiting" : "Check Payment";
+    const cashBorder = isCashPending ? "border-left:3px solid #c4a96a" : isCashSent ? "border-left:3px solid #1a73e8" : "";
+    return `<div class="list-item" style="${cashBorder}">
+      <div class="row"><div><strong>Table ${o.table}</strong><p class="muted small">Order #${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p></div><div class="row-left">${o.status === "delivered" ? `<span class="pill ok">🍽 Served</span>` : ""}<span class="pill ${pillClass}">${pillLabel}</span></div></div>
       ${orderLines(o)}
-      <div class="row" style="margin-top:10px"><strong>Total ${money(o.total)}</strong><div class="row-left">
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;overflow-x:auto;min-width:0"><strong style="white-space:nowrap">Total ${money(o.total)}</strong><div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         ${o.paymentStatus === "waiting" ? `<button class="btn ok" data-action="mark-paid" data-id="${o.id}">✓ Payment Received</button>` : ""}
-        ${isCash ? `<button class="btn" style="background:#e8d9a0;border:1.5px solid #c4a96a;color:#7a5c1e;font-weight:600" data-action="accept-cash" data-id="${o.id}">✓ Accept Cash</button>` : ""}
+        ${isCashPending ? `<button class="btn" style="background:#e8d9a0;border:1.5px solid #c4a96a;color:#7a5c1e;font-weight:600" data-action="accept-cash" data-id="${o.id}">🍳 Send to Kitchen</button>` : ""}
+        ${isCashSent ? `<button class="btn ok" data-action="cash-received" data-id="${o.id}">💵 Cash Received</button>` : ""}
         ${isPaid || isCashAccepted ? `<button class="btn bad" data-action="close-order" data-id="${o.id}">Close</button>` : ""}
+        <button class="btn" data-action="reprint-bill" data-id="${o.id}">🧾 Print Bill</button>
       </div></div>
     </div>`;
   }
 
   function billCardClosed(o) {
     const isPaid = o.paymentStatus === "paid";
-    const isCash = o.paymentStatus === "cash_accepted";
+    const isCash = o.paymentStatus === "cash_accepted" || o.paymentStatus === "cash_sent";
     return `<div class="list-item" style="opacity:0.75">
       <div class="row">
         <div><strong>Table ${o.table}</strong><p class="muted small">Order #${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p></div>
         <span class="pill ${isPaid || isCash ? "ok" : "neutral"}">${isPaid ? "UPI Paid" : isCash ? "Cash" : "Closed"}</span>
       </div>
       ${orderLines(o)}
-      <div class="row" style="margin-top:6px"><strong>${money(o.total)}</strong><span class="pill neutral">Closed</span></div>
+      <div class="row" style="margin-top:6px">
+        <strong>${money(o.total)}</strong>
+        <div class="row-left">
+          <span class="pill neutral">Closed</span>
+          <button class="btn" data-action="reprint-bill" data-id="${o.id}">🧾 Reprint Bill</button>
+        </div>
+      </div>
     </div>`;
+  }
+
+  // ---- Reprint Bill: builds a clean printable receipt and triggers window.print() ----
+
+  function receiptRow(name, qty, price) {
+    return `<tr><td style="text-align:left">${esc(name)}</td><td style="text-align:center">${qty}</td><td style="text-align:right">${money(price * qty)}</td></tr>`;
+  }
+
+  function buildReceiptHTML(r, o) {
+    const rows = (o.items || []).map(i => receiptRow(i.name, i.qty, i.price)).join("")
+      + (o.addons || []).map(a => receiptRow("+ " + a.name, a.qty || 1, a.price)).join("");
+    const payLabel = o.paymentStatus === "paid" ? "UPI"
+      : (o.paymentStatus === "cash_accepted" || o.paymentStatus === "cash_sent") ? "Cash"
+      : "Pending";
+    return `<div class="receipt">
+      <h2>${esc(r.name)}</h2>
+      ${r.city ? `<p>${esc(r.city)}</p>` : ""}
+      <p>Table ${esc(String(o.table))} &middot; #${o.id.slice(-5).toUpperCase()}</p>
+      <p>${new Date(o.createdAt).toLocaleString("en-IN")}</p>
+      <hr>
+      <table>
+        <thead><tr><th style="text-align:left">Item</th><th>Qty</th><th style="text-align:right">Amt</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <hr>
+      <p class="receipt-total"><span>Total</span><span>${money(o.total)}</span></p>
+      <p>Payment: ${payLabel}</p>
+      ${o.note ? `<p>Note: ${esc(o.note)}</p>` : ""}
+      <p style="margin-top:10px">Thank you for visiting!</p>
+    </div>`;
+  }
+
+  function printReceipt(orderId) {
+    const o = state.orders.find(x => x.id === orderId);
+    if (!o) return toast("Order not found");
+    const r = bySlug(o.restaurantSlug);
+    if (!r) return toast("Restaurant not found");
+    let holder = document.getElementById("print-receipt-holder");
+    if (!holder) {
+      holder = document.createElement("div");
+      holder.id = "print-receipt-holder";
+      document.body.appendChild(holder);
+    }
+    holder.innerHTML = buildReceiptHTML(r, o);
+    document.body.classList.add("printing-receipt");
+    setTimeout(() => window.print(), 50);
+    setTimeout(() => document.body.classList.remove("printing-receipt"), 3000);
   }
 
   function orderLines(o) {
@@ -977,7 +1180,9 @@
     if (action === "cart-dec") return decCart(el.dataset.id);
     if (action === "place-order") return placeOrder(el.dataset.slug);
     if (action === "place-order-cash") return placeOrderCash(el.dataset.slug);
-    if (action === "accept-cash") return updateOrder(el.dataset.id, o => { o.paymentStatus = "cash_accepted"; o.status = "pending"; });
+    if (action === "accept-cash") return updateOrder(el.dataset.id, o => { o.paymentStatus = "cash_sent"; o.status = "pending"; });
+    if (action === "billing-date-clear") return billingDateFilter = "", render();
+    if (action === "cash-received") return updateOrder(el.dataset.id, o => { o.paymentStatus = "cash_accepted"; });
     if (action === "addon-change") return updatePaymentTotal();
     if (action === "addon-inc") return selectedAddons[el.dataset.id] = (selectedAddons[el.dataset.id] || 0) + 1, render();
     if (action === "addon-dec") return decAddon(el.dataset.id);
@@ -988,6 +1193,14 @@
     if (action === "mark-paid") return updateOrder(el.dataset.id, o => { o.paymentStatus = "paid"; o.status = "pending"; });
     if (action === "advance-order") return updateOrder(el.dataset.id, o => o.status = el.dataset.next);
     if (action === "close-order") return updateOrder(el.dataset.id, o => o.status = "completed");
+    if (action === "reprint-bill") return printReceipt(el.dataset.id);
+    if (action === "toggle-sound") {
+      soundEnabled = !soundEnabled;
+      localStorage.setItem("restoqr_sound_off", soundEnabled ? "no" : "yes");
+      if (soundEnabled) { ensureAudioCtx(); playOrderAlertSound(); }
+      toast(soundEnabled ? "🔔 New-order alert sound is ON" : "🔕 New-order alert sound muted");
+      return render();
+    }
   }
 
   function adminLogin() {
@@ -999,13 +1212,14 @@
   }
 
   function registerRestaurant() {
-    const name = val("reg-name"), owner = val("reg-owner"), phone = val("reg-phone"), city = val("reg-city"), pin = val("reg-pin"), upiId = val("reg-upiid"), upi = val("reg-upi"), review = val("reg-review");
+    const name = val("reg-name"), owner = val("reg-owner"), phone = val("reg-phone"), city = val("reg-city"), pin = val("reg-pin"), upiId = val("reg-upiid"), upi = val("reg-upi"), review = val("reg-review"), coupon = val("reg-coupon").toUpperCase();
     if (!name || !owner || !phone || !pin) return toast("Fill restaurant, owner, phone, and PIN");
     const slug = slugify(name);
     if (bySlug(slug)) return toast("Restaurant name already exists");
     mutate(s => s.restaurants.push({
       id: uid(), slug, name, owner, phone, city, ownerPin: pin, active: false, qrEnabled: false,
       plan: "Pending", subscriptionEnds: Date.now(), paymentQr: DEFAULT_QR, upiId: upiId || "", upiName: upi || owner, googleReviewUrl: review,
+      couponCode: coupon,
       tables: [1, 2, 3, 4].map(no => ({ no, seats: 4 })),
       categories: ["Starters", "Main Course", "Breads", "Beverages"],
       menu: [], addons: [], createdAt: Date.now()
@@ -1177,7 +1391,13 @@
   }
 
   function topbar(active, r) {
-    return `<header class="topbar"><div class="topbar-inner">
+    return `<style>
+      .order-scroll::-webkit-scrollbar { width: 5px; }
+      .order-scroll::-webkit-scrollbar-track { background: transparent; }
+      .order-scroll::-webkit-scrollbar-thumb { background: var(--line,#e5e7eb); border-radius: 99px; }
+      .order-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted,#9ca3af); }
+    </style>
+    <header class="topbar"><div class="topbar-inner">
       <a class="brand" href="#/"><img src="./assets/logo.png" alt="RestoQR" style="height: 60px;"></a>
       <nav class="nav">
         <a class="btn ${active === "home" ? "primary" : ""}" href="#/" title="Home" style="display:inline-flex;align-items:center;padding:8px 10px">
@@ -1187,6 +1407,7 @@
             <path d="M5 10v11h14V10"/>
           </svg>
         </a>
+        ${r ? `<button class="btn" data-action="toggle-sound" title="${soundEnabled ? "Mute new-order alerts" : "Unmute new-order alerts"}" style="display:inline-flex;align-items:center;padding:8px 10px;font-size:16px">${soundEnabled ? "🔔" : "🔕"}</button>` : ""}
         <a class="btn ${active === "register" ? "primary" : ""}" href="#/register">Register</a>
         <a class="btn ${active === "owner" ? "primary" : ""}" href="#/owner${r ? "?resto=" + r.slug : ""}">Owner</a>
         <a class="btn ${active === "admin" ? "primary" : ""}" href="#/admin">Admin</a>
@@ -1212,7 +1433,7 @@
   }
 
   function field(label, id, tag, placeholder, type) {
-    const placeholderOnly = ["Cafe Aroma", "Owner name", "Mobile number", "City", "4 digit PIN", "Shown under payment QR", "Paste Google review link", "name@upi or 9999999999@paytm", "Paneer Tikka", "Starters", "220", "Extra Roti", "30", "7", "4", "Enter passcode", "Enter PIN"];
+    const placeholderOnly = ["Cafe Aroma", "Owner name", "Mobile number", "City", "4 digit PIN", "Shown under payment QR", "Paste Google review link", "name@upi or 9999999999@paytm", "Paneer Tikka", "Starters", "220", "Extra Roti", "30", "7", "4", "Enter passcode", "Enter PIN", "Optional — have a code?", "e.g. LAUNCH999"];
     const value = placeholder && !placeholderOnly.includes(placeholder) ? placeholder : "";
     if (tag === "textarea") return `<div class="field"><label>${label}</label><textarea id="${id}" placeholder="${placeholder || ""}">${value}</textarea></div>`;
     return `<div class="field"><label>${label}</label><input id="${id}" type="${type || "text"}" placeholder="${placeholder || ""}" value="${esc(value)}"></div>`;
@@ -1246,7 +1467,28 @@
     toastEl._t = setTimeout(() => toastEl.hidden = true, 2400);
   }
 
-  window._setBillingDate = function(val) { billingDateFilter = val; render(); };
+
   document.addEventListener("click", bindClicks);
+  document.addEventListener("click", function unlockAudioOnce() { ensureAudioCtx(); }, { once: true });
+  window.addEventListener("storage", e => {
+    if (firebaseMode || e.key !== KEY || !e.newValue) return;
+    try {
+      const normalized = normalizeState(JSON.parse(e.newValue));
+      checkNewOrders(normalized);
+      state = normalized;
+      render();
+    } catch {}
+  });
+  window.addEventListener("afterprint", () => {
+    document.body.classList.remove("printing-receipt");
+  });
+  document.addEventListener("change", function(e) {
+    const el = e.target.closest("[data-action]");
+    if (!el) return;
+    if (el.dataset.action === "billing-date-pick" || el.dataset.action === "billing-date-select") {
+      billingDateFilter = el.value;
+      render();
+    }
+  });
   start();
 })();

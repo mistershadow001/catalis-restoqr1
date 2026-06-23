@@ -622,15 +622,21 @@
         </div>
         ${lastOrder && lastOrder.status === "completed" ? customerStatusCard(r, lastOrder) : ""}
         <div class="cat-strip">${unique(r.menu.map(i => i.category)).map(c => `<button class="${c === customerCat ? "active" : ""}" data-action="customer-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
-        <div style="padding-bottom:${(cartCount() || addonCartCount()) ? "160px" : "80px"}">
+        <div style="${cartCount() ? "padding-bottom:0" : "padding-bottom:80px"}">
           ${items.map(i => customerItem(r, i)).join("") || empty("No items available")}
           ${r.addons.filter(a => a.active).length ? `
             <div style="padding:10px 14px 4px;border-top:1px solid var(--line);margin-top:8px">
               <p style="font-size:12px;font-weight:600;color:var(--muted,#6b7280);margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
-              ${r.addons.filter(a => a.active).map(a => customerAddonItem(a)).join("")}
+              ${r.addons.filter(a => a.active).map(a => `
+                <div class="customer-item">
+                  <label style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1">
+                    <input type="checkbox" data-action="addon-toggle" data-addon="${a.id}" data-price="${a.price}" data-base="0" data-pa="${r.upiId||""}" data-pn="${esc(r.upiName||r.name)}" class="addon-chk" ${selectedAddons[a.id] ? "checked" : ""} style="width:18px;height:18px;accent-color:var(--ok,#16a34a)">
+                    <div><strong>+ ${esc(a.name)}</strong><p class="muted small">${money(a.price)}</p></div>
+                  </label>
+                </div>`).join("")}
             </div>` : ""}
         </div>
-        ${(cartCount() || addonCartCount()) ? checkoutBox(r, total) : ""}
+        ${cartCount() ? checkoutBox(r, total) : ""}
       </div>`;
   }
 
@@ -643,25 +649,17 @@
     </div>`;
   }
 
-  function customerAddonItem(a) {
-    const q = selectedAddons[a.id] || 0;
-    return `<div class="customer-item">
-      <div><strong>+ ${esc(a.name)}</strong><p class="muted small">${money(a.price)}</p></div>
-      ${q ? `<div class="qty"><button data-action="addon-dec" data-id="${a.id}">-</button><strong>${q}</strong><button class="plus" data-action="addon-inc" data-id="${a.id}">+</button></div>` : `<button class="btn primary" data-action="addon-inc" data-id="${a.id}">Add</button>`}
-    </div>`;
-  }
-
   function checkoutBox(r, total) {
     const pa = encodeURIComponent(r.upiId || "");
     const pn = encodeURIComponent(r.upiName || r.name);
-    const addonTotal = Object.entries(selectedAddons).reduce((s, [id, qty]) => {
+    const addonTotal = Object.keys(selectedAddons).reduce((s, id) => {
       const a = find(r.addons, id);
-      return s + (a ? a.price * qty : 0);
+      return s + (a ? a.price : 0);
     }, 0);
     const grand = total + addonTotal;
-    const selectedAddonList = Object.entries(selectedAddons).map(([id, qty]) => ({ ...find(r.addons, id), qty })).filter(a => a && a.id);
+    const selectedAddonList = Object.keys(selectedAddons).map(id => find(r.addons, id)).filter(Boolean);
 
-    return `<div class="cart-bar" style="position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;flex-direction:column;max-height:55vh;box-shadow:0 -4px 24px rgba(0,0,0,0.12);">
+    return `<div class="cart-bar" style="display:flex;flex-direction:column;max-height:70vh;">
 
       <div class="cart-scrollable" style="overflow-y:auto;flex:1;min-height:0;padding-bottom:4px">
         <div class="cart-summary">
@@ -669,7 +667,7 @@
             const m = find(r.menu, id);
             return m ? `<div class="cart-row"><span>${esc(m.name)} × ${qty}</span><span>${money(m.price * qty)}</span></div>` : "";
           }).join("")}
-          ${selectedAddonList.map(a => `<div class="cart-row"><span>+ ${esc(a.name)} × ${a.qty}</span><span>${money(a.price * a.qty)}</span></div>`).join("")}
+          ${selectedAddonList.map(a => `<div class="cart-row"><span>+ ${esc(a.name)}</span><span>${money(a.price)}</span></div>`).join("")}
           <div class="cart-row cart-total"><span>Total</span><strong>${money(grand)}</strong></div>
         </div>
 
@@ -891,8 +889,6 @@
     if (action === "cart-dec") return decCart(el.dataset.id);
     if (action === "place-order") return placeOrder(el.dataset.slug);
     if (action === "addon-change") return updatePaymentTotal();
-    if (action === "addon-inc") return selectedAddons[el.dataset.id] = (selectedAddons[el.dataset.id] || 0) + 1, render();
-    if (action === "addon-dec") return decAddon(el.dataset.id);
     if (action === "dismiss-review") return localStorage.removeItem("restoqr_last_order_" + el.dataset.slug), render();
     if (action === "refresh-order") return render();
     if (action === "set-star") return setStar(el);
@@ -992,24 +988,26 @@
       if (inp) { inp.style.border = "2px solid #c93333"; inp.style.borderRadius = "8px"; inp.focus(); setTimeout(() => inp.style.border = "", 2000); }
       return toast("⚠ Please enter your table number");
     }
-    const pickedAddons = [...document.querySelectorAll("[data-addon]:checked")].map(x => find(r.addons, x.dataset.addon)).filter(Boolean);
+    const pickedAddons = Object.entries(selectedAddons)
+      .map(([id, qty]) => { const a = find(r.addons, id); return a ? { id: a.id, name: a.name, price: a.price, qty } : null; })
+      .filter(Boolean);
     const items = Object.entries(cart).map(([id, qty]) => {
       const m = find(r.menu, id);
       return { id, name: m.name, price: m.price, qty };
     });
-    const total = items.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price, 0);
-    if (!items.length) return toast("Cart is empty");
+    const total = items.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
+    if (!items.length && !pickedAddons.length) return toast("Cart is empty");
     const orderId = uid();
     mutate(s => s.orders.push({
       id: orderId, restaurantSlug: slug, table, items,
-      addons: pickedAddons.map(a => ({ id: a.id, name: a.name, price: a.price })),
+      addons: pickedAddons,
       note: val("order-note"), total, paymentStatus: "waiting", status: "payment_check", createdAt: Date.now()
     }));
     localStorage.setItem("restoqr_last_order_" + slug, orderId);
     cart = {};
+    selectedAddons = {};
     customerCat = "";
     toast("Order placed! Waiting for payment verification.");
-    // Re-render stays on the same hash — render() will now show the order status card at top
     render();
   }
 
@@ -1103,10 +1101,8 @@
   function bySlug(slug) { return state.restaurants.find(r => r.slug === slug); }
   function find(arr, id) { return arr.find(x => String(x.id) === String(id)); }
   function cartCount() { return Object.values(cart).reduce((s, q) => s + q, 0); }
-  function addonCartCount() { return Object.values(selectedAddons).reduce((s, q) => s + q, 0); }
   function cartTotal(r) { return Object.entries(cart).reduce((s, [id, q]) => { const i = find(r.menu, id); return s + (i ? i.price * q : 0); }, 0); }
   function decCart(id) { if (cart[id] > 1) cart[id] -= 1; else delete cart[id]; render(); }
-  function decAddon(id) { if (selectedAddons[id] > 1) selectedAddons[id] -= 1; else delete selectedAddons[id]; render(); }
   function money(n) { return "₹" + Math.round(Number(n) || 0).toLocaleString("en-IN"); }
   function days(n) { return n * 24 * 60 * 60 * 1000; }
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }

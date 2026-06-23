@@ -11,6 +11,7 @@
   let customerCat = "";
   let cart = {};
   let selectedAddons = {}; // addonId -> true
+  let billingDateFilter = new Date().toISOString().slice(0, 10); // YYYY-MM-DD, default today
 
   const COMMON_ITEMS = [
     ["Paneer Tikka", "Starters", 220, true], ["Chicken 65", "Starters", 280, false], ["Veg Manchurian", "Starters", 180, true],
@@ -548,13 +549,67 @@
   }
 
   function kitchenPanel(r) {
-    const orders = state.orders.filter(o => o.restaurantSlug === r.slug && o.paymentStatus === "paid" && o.status !== "completed");
-    return `<section class="card"><div class="section-head"><div><h2>Kitchen</h2><p>Paid orders appear here after counter verifies payment.</p></div></div>${orders.map(orderCard).join("") || empty("No paid kitchen orders")}</section>`;
+    const orders = state.orders.filter(o => o.restaurantSlug === r.slug && (o.paymentStatus === "paid" || o.paymentStatus === "cash_accepted") && o.status !== "completed");
+    return `<section class="card"><div class="section-head"><div><h2>Kitchen</h2><p>Paid & cash-accepted orders appear here for preparation.</p></div></div>${orders.map(o => orderCard(o)).join("") || empty("No active kitchen orders")}</section>`;
   }
 
   function billingPanel(r) {
-    const orders = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
-    return `<section class="card"><div class="section-head"><div><h2>Billing Counter</h2><p>Check PhonePe payment, mark paid, and close tables.</p></div></div>${orders.map(billCard).join("") || empty("No active bills")}</section>`;
+    const active = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
+
+    // All completed orders, newest first
+    const allCompleted = state.orders
+      .filter(o => o.restaurantSlug === r.slug && o.status === "completed")
+      .slice().reverse();
+
+    // Unique dates for the date filter dropdown (YYYY-MM-DD)
+    const uniqueDates = [...new Set(allCompleted.map(o => new Date(o.createdAt).toISOString().slice(0, 10)))];
+
+    // Orders for the selected date
+    const filtered = billingDateFilter
+      ? allCompleted.filter(o => new Date(o.createdAt).toISOString().slice(0, 10) === billingDateFilter)
+      : allCompleted;
+
+    // Summary for selected date
+    const upiTotal = filtered.filter(o => o.paymentStatus === "paid").reduce((s, o) => s + o.total, 0);
+    const cashTotal = filtered.filter(o => o.paymentStatus === "cash_accepted").reduce((s, o) => s + o.total, 0);
+
+    const dateLabel = billingDateFilter
+      ? new Date(billingDateFilter + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+      : "All Time";
+
+    return `
+      <section class="card">
+        <div class="section-head"><div><h2>Billing Counter</h2><p>Verify PhonePe payments, accept cash, and close tables.</p></div></div>
+        ${active.map(billCard).join("") || empty("No active bills")}
+      </section>
+
+      <section class="card" style="margin-top:14px">
+        <div class="section-head">
+          <div><h2>Closed Orders</h2><p>All completed orders — filter by date for verification.</p></div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <label style="font-size:13px;font-weight:600;color:var(--muted,#6b7280)">Filter by date:</label>
+          <select id="billing-date-filter" onchange="window._setBillingDate(this.value)"
+            style="padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:14px;background:var(--card,#fff)">
+            <option value="">All Time</option>
+            ${uniqueDates.map(d => {
+              const label = new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+              return '<option value="' + d + '" ' + (d === billingDateFilter ? 'selected' : '') + '>' + label + '</option>';
+            }).join("")}
+          </select>
+          ${billingDateFilter ? `<button class="btn" style="font-size:12px;padding:6px 10px" onclick="window._setBillingDate('')">Clear</button>` : ""}
+        </div>
+
+        ${filtered.length ? `
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+            <div class="stat" style="min-width:120px"><p>🔵 UPI Collected</p><strong>${filtered.filter(o => o.paymentStatus === "paid").length} orders · ₹${upiTotal.toLocaleString("en-IN")}</strong></div>
+            <div class="stat" style="min-width:120px"><p>💵 Cash Collected</p><strong>${filtered.filter(o => o.paymentStatus === "cash_accepted").length} orders · ₹${cashTotal.toLocaleString("en-IN")}</strong></div>
+            <div class="stat" style="min-width:120px"><p>📦 Total Orders</p><strong>${filtered.length} · ₹${(upiTotal + cashTotal).toLocaleString("en-IN")}</strong></div>
+          </div>
+          ${filtered.map(billCardClosed).join("")}
+        ` : empty("No closed orders for " + dateLabel)}
+      </section>`;
   }
 
   function feedbackPanel(r) {
@@ -690,6 +745,14 @@
           </a>
         </div>
         ${!r.upiId ? `<p style="color:#c93333;font-size:12px;margin:4px 0">⚠ UPI ID not set — add in Settings.</p>` : ""}
+
+        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line,#e5e7eb)">
+          <p style="font-size:11px;color:var(--muted,#9ca3af);margin:0 0 6px;text-align:center">OR</p>
+          <button class="btn block" data-action="place-order-cash" data-slug="${r.slug}"
+            style="background:#f5f0e8;border:1.5px solid #c4a96a;color:#7a5c1e;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;padding:13px">
+            💵 I'll Pay in Cash at Counter
+          </button>
+        </div>
       </div>
 
       <div style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">
@@ -762,7 +825,11 @@
         </div>
 
         <p style="text-align:center;font-size:13px;color:var(--muted,#6b7280);margin:0 0 16px">
-          ${o.paymentStatus === "waiting" ? "⏳ Waiting for payment verification by counter..." : o.status === "preparing" ? "👨‍🍳 Your food is being prepared!" : o.status === "ready" ? "🛎 Your order is ready! Counter will serve you shortly." : "✅ Payment verified. Order confirmed!"}
+          ${o.paymentStatus === "cash_pending" ? "💵 Please pay cash at the billing counter. Waiting for acceptance..." :
+            o.paymentStatus === "cash_accepted" ? "✅ Cash accepted by counter. Order sent to kitchen!" :
+            o.paymentStatus === "waiting" ? "⏳ Waiting for payment verification by counter..." :
+            o.status === "preparing" ? "👨‍🍳 Your food is being prepared!" :
+            o.status === "ready" ? "🛎 Your order is ready! Counter will serve you shortly." : "✅ Payment verified. Order confirmed!"}
         </p>
 
         <button class="btn block" style="width:100%;margin-bottom:10px" data-action="refresh-order" data-slug="${r.slug}">↻ Refresh Status</button>
@@ -808,13 +875,32 @@
   }
 
   function billCard(o) {
-    return `<div class="list-item">
-      <div class="row"><div><strong>Table ${o.table}</strong><p class="muted small">Order #${o.id.slice(-5).toUpperCase()}</p></div><span class="pill ${o.paymentStatus === "paid" ? "ok" : "warn"}">${o.paymentStatus === "paid" ? "Paid" : "Check Payment"}</span></div>
+    const isCash = o.paymentStatus === "cash_pending";
+    const isCashAccepted = o.paymentStatus === "cash_accepted";
+    const isPaid = o.paymentStatus === "paid";
+    const pillClass = isPaid || isCashAccepted ? "ok" : isCash ? "warn" : "warn";
+    const pillLabel = isPaid ? "UPI Paid" : isCashAccepted ? "Cash Accepted" : isCash ? "💵 Cash – Pending" : "Check Payment";
+    return `<div class="list-item" style="${isCash ? "border-left:3px solid #c4a96a" : ""}">
+      <div class="row"><div><strong>Table ${o.table}</strong><p class="muted small">Order #${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p></div><span class="pill ${pillClass}">${pillLabel}</span></div>
       ${orderLines(o)}
       <div class="row" style="margin-top:10px"><strong>Total ${money(o.total)}</strong><div class="row-left">
-        ${o.paymentStatus === "waiting" ? `<button class="btn ok" data-action="mark-paid" data-id="${o.id}">Payment Received</button>` : ""}
-        <button class="btn bad" data-action="close-order" data-id="${o.id}">Close</button>
+        ${o.paymentStatus === "waiting" ? `<button class="btn ok" data-action="mark-paid" data-id="${o.id}">✓ Payment Received</button>` : ""}
+        ${isCash ? `<button class="btn" style="background:#e8d9a0;border:1.5px solid #c4a96a;color:#7a5c1e;font-weight:600" data-action="accept-cash" data-id="${o.id}">✓ Accept Cash</button>` : ""}
+        ${isPaid || isCashAccepted ? `<button class="btn bad" data-action="close-order" data-id="${o.id}">Close</button>` : ""}
       </div></div>
+    </div>`;
+  }
+
+  function billCardClosed(o) {
+    const isPaid = o.paymentStatus === "paid";
+    const isCash = o.paymentStatus === "cash_accepted";
+    return `<div class="list-item" style="opacity:0.75">
+      <div class="row">
+        <div><strong>Table ${o.table}</strong><p class="muted small">Order #${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p></div>
+        <span class="pill ${isPaid || isCash ? "ok" : "neutral"}">${isPaid ? "UPI Paid" : isCash ? "Cash" : "Closed"}</span>
+      </div>
+      ${orderLines(o)}
+      <div class="row" style="margin-top:6px"><strong>${money(o.total)}</strong><span class="pill neutral">Closed</span></div>
     </div>`;
   }
 
@@ -890,6 +976,8 @@
     if (action === "cart-inc") return cart[el.dataset.id] = (cart[el.dataset.id] || 0) + 1, render();
     if (action === "cart-dec") return decCart(el.dataset.id);
     if (action === "place-order") return placeOrder(el.dataset.slug);
+    if (action === "place-order-cash") return placeOrderCash(el.dataset.slug);
+    if (action === "accept-cash") return updateOrder(el.dataset.id, o => { o.paymentStatus = "cash_accepted"; o.status = "pending"; });
     if (action === "addon-change") return updatePaymentTotal();
     if (action === "addon-inc") return selectedAddons[el.dataset.id] = (selectedAddons[el.dataset.id] || 0) + 1, render();
     if (action === "addon-dec") return decAddon(el.dataset.id);
@@ -1015,6 +1103,37 @@
     render();
   }
 
+  function placeOrderCash(slug) {
+    const r = bySlug(slug);
+    const table = Number(val("customer-table"));
+    if (!table) {
+      const inp = document.getElementById("customer-table");
+      if (inp) { inp.style.border = "2px solid #c93333"; inp.style.borderRadius = "8px"; inp.focus(); setTimeout(() => inp.style.border = "", 2000); }
+      return toast("⚠ Please enter your table number");
+    }
+    const pickedAddons = Object.entries(selectedAddons)
+      .map(([id, qty]) => { const a = find(r.addons, id); return a ? { id: a.id, name: a.name, price: a.price, qty } : null; })
+      .filter(Boolean);
+    const items = Object.entries(cart).map(([id, qty]) => {
+      const m = find(r.menu, id);
+      return { id, name: m.name, price: m.price, qty };
+    });
+    const total = items.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
+    if (!items.length && !pickedAddons.length) return toast("Cart is empty");
+    const orderId = uid();
+    mutate(s => s.orders.push({
+      id: orderId, restaurantSlug: slug, table, items,
+      addons: pickedAddons,
+      note: val("order-note"), total, paymentStatus: "cash_pending", status: "payment_check", createdAt: Date.now()
+    }));
+    localStorage.setItem("restoqr_last_order_" + slug, orderId);
+    cart = {};
+    selectedAddons = {};
+    customerCat = "";
+    toast("Cash order placed! Counter will accept your payment.");
+    render();
+  }
+
   function setStar(el) {
     const n = Number(el.dataset.star);
     document.querySelectorAll("[data-action='set-star']").forEach((btn, i) => {
@@ -1127,6 +1246,7 @@
     toastEl._t = setTimeout(() => toastEl.hidden = true, 2400);
   }
 
+  window._setBillingDate = function(val) { billingDateFilter = val; render(); };
   document.addEventListener("click", bindClicks);
   start();
 })();

@@ -6,6 +6,8 @@
 
   let state = seed();
   let db = null;
+  let auth = null;
+  let currentUser = null;  // Firebase Auth user
   let firebaseMode = false;
   let ownerTab = "overview";
   let customerCat = "";
@@ -16,7 +18,7 @@
   // ================================================================
   // STAFF DASHBOARD — state
   // ================================================================
-  let staffTab = "tables";      // "tables" | "kitchen" | "billing"
+  let staffTab = "waiter";      // "waiter" | "tables" | "kitchen" | "billing"
   let staffSheetTable = null;   // table number shown in bottom sheet
   let staffSelectedRole = "waiter"; // role selected on login screen
 
@@ -130,15 +132,23 @@
     firebaseMode = canUseFirebase();
     if (firebaseMode) {
       firebase.initializeApp(window.FIREBASE_CONFIG);
-      db = firebase.database().ref("restoqr");
+      auth = firebase.auth();
+      db   = firebase.database().ref("restoqr");
+
+      // Listen for auth state — renders gated views correctly
+      auth.onAuthStateChanged(user => {
+        currentUser = user || null;
+        render();
+      });
+
+      // Live DB listener
       db.on("value", snap => {
         const value = snap.val();
         if (value && value.restaurants) {
           const normalized = normalizeState(value);
           checkNewOrders(normalized);
           state = normalized;
-        }
-        else save(seed());
+        } else save(seed());
         render();
       });
     } else {
@@ -159,6 +169,47 @@
     return !!(window.firebase && c.apiKey && c.databaseURL && c.projectId);
   }
 
+  // ── Firebase Auth helpers ────────────────────────────────────────
+  function authSignIn(email, password, onErr) {
+    if (!auth) return onErr("Firebase not available");
+    auth.signInWithEmailAndPassword(email, password)
+      .catch(e => onErr(friendlyAuthError(e.code)));
+  }
+
+  function authSignOut() {
+    if (auth) auth.signOut();
+    currentUser = null;
+    render();
+  }
+
+  function friendlyAuthError(code) {
+    const map = {
+      "auth/user-not-found":      "No account found for this email.",
+      "auth/wrong-password":       "Incorrect password. Try again.",
+      "auth/invalid-email":        "Please enter a valid email address.",
+      "auth/too-many-requests":    "Too many attempts. Please wait a moment.",
+      "auth/invalid-credential":   "Incorrect email or password.",
+      "auth/network-request-failed": "Network error. Check your connection."
+    };
+    return map[code] || "Login failed. Please try again.";
+  }
+
+  // Returns the restaurant slug linked to the signed-in owner account.
+  // We store   restoqr_owner_email_<slug> = email   in Firebase under each restaurant,
+  // so we just scan for a match.
+  function ownerSlugForUser(user) {
+    if (!user) return null;
+    const email = (user.email || "").toLowerCase();
+    return state.restaurants.find(r => (r.ownerEmail || "").toLowerCase() === email)?.slug || null;
+  }
+
+  // True when the signed-in user is the designated super-admin email
+  function isAdmin(user) {
+    if (!user) return false;
+    const adminEmail = (window.FIREBASE_CONFIG.adminEmail || "").toLowerCase();
+    return adminEmail && user.email.toLowerCase() === adminEmail;
+  }
+
   function normalizeState(raw) {
     const next = clone(raw || seed());
     next.restaurants = next.restaurants || [];
@@ -170,6 +221,7 @@
       r.upiName = r.upiName || r.owner || r.name;
       r.upiId = r.upiId || "";
       r.couponCode = r.couponCode || "";
+      r.ownerEmail = r.ownerEmail || "";
       r.tables = r.tables || [];
       r.tableCount = r.tableCount || r.tables.length || 4;
       r.menu = r.menu || [];
@@ -466,17 +518,60 @@
       </div>`;
   }
 
-  function adminView() {
-    if (localStorage.getItem("restoqr_admin_unlocked") !== "yes") {
+  // ================================================================
+  // FIREBASE AUTH — shared login screen (admin + owner)
+  // ================================================================
+  function authLoginView(role, errorMsg) {
+    const isAdmin = role === "admin";
+    const title   = isAdmin ? "Admin Login" : "Owner Login";
+    const hint    = isAdmin
+      ? "Sign in with your admin Google/email account."
+      : "Sign in with the email linked to your restaurant.";
+    const icon    = isAdmin ? "🔐" : "🏪";
+
+    // Demo-mode fallback (no Firebase)
+    if (!firebaseMode) {
+      const pinLabel = isAdmin ? "Admin Passcode" : "Owner PIN";
+      const action   = isAdmin ? "admin-login" : "owner-login";
+      const inputId  = isAdmin ? "admin-pin" : "owner-pin";
       return `
-        ${topbar("admin")}
+        ${topbar(role)}
         <main class="wrap">
           <section class="card" style="max-width:420px">
-            <div class="section-head"><div><h2>Super Admin</h2><p>Enter your admin passcode.</p></div></div>
-            ${field("Admin Passcode", "admin-pin", "input", "Enter passcode", "password")}
-            <button class="btn primary block" data-action="admin-login">Unlock Admin</button>
+            <div class="section-head"><div><h2>${icon} ${title}</h2><p>${hint}</p></div></div>
+            ${field(pinLabel, inputId, "input", "Enter passcode", "password")}
+            <button class="btn primary block" data-action="${action}">${isAdmin ? "Unlock Admin" : "Open Panel"}</button>
           </section>
         </main>`;
+    }
+
+    return `
+      ${topbar(role)}
+      <main class="wrap">
+        <section class="card" style="max-width:420px;margin:0 auto">
+          <div style="text-align:center;margin-bottom:22px">
+            <div style="font-size:44px;margin-bottom:8px">${icon}</div>
+            <h2 style="margin:0 0 6px">${title}</h2>
+            <p class="muted" style="margin:0">${hint}</p>
+          </div>
+          ${errorMsg ? `<div style="background:#fff0f0;border:1px solid #f5c6c6;border-radius:8px;padding:10px 14px;margin-bottom:16px;color:#c0392b;font-size:13px;font-weight:600">${esc(errorMsg)}</div>` : ""}
+          <div id="auth-err" style="display:none;background:#fff0f0;border:1px solid #f5c6c6;border-radius:8px;padding:10px 14px;margin-bottom:16px;color:#c0392b;font-size:13px;font-weight:600"></div>
+          <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="your@email.com" autocomplete="username"></div>
+          <div class="field"><label>Password</label><input id="auth-password" type="password" placeholder="Password" autocomplete="current-password"></div>
+          <button class="btn primary block" id="auth-submit-btn" data-action="auth-login" data-role="${role}">Sign In</button>
+          <p class="muted small" style="text-align:center;margin-top:14px">Forgot password? Contact your administrator.</p>
+        </section>
+      </main>`;
+  }
+
+  function adminView() {
+    // Firebase mode: require signed-in admin email
+    if (firebaseMode) {
+      if (!currentUser) return authLoginView("admin");
+      if (!isAdmin(currentUser)) return authLoginView("admin", "This account does not have admin access.");
+    } else {
+      // Fallback: local PIN for demo mode
+      if (localStorage.getItem("restoqr_admin_unlocked") !== "yes") return authLoginView("admin");
     }
     const totalOrders = state.orders.length;
     const revenue = state.orders.filter(o => o.paymentStatus === "paid").reduce((s, o) => s + o.total, 0);
@@ -490,7 +585,10 @@
           ${stat("Paid Value", money(revenue))}
         </div>
         <section class="card" style="margin-top:14px">
-          <div class="section-head"><div><h2>Restaurants</h2><p>Activate subscriptions, disable QR ordering, and control access.</p></div><button class="btn" data-action="admin-logout">Lock</button></div>
+          <div class="section-head">
+            <div><h2>Restaurants</h2><p>Activate subscriptions, disable QR ordering, and control access.</p></div>
+            <button class="btn" data-action="auth-signout">Sign Out</button>
+          </div>
           ${state.restaurants.map(r => restaurantAdminCard(r)).join("") || empty("No restaurants yet")}
         </section>
       </main>`;
@@ -530,21 +628,37 @@
     const slug = params.get("resto") || localStorage.getItem("restoqr_owner_slug") || (state.restaurants[0]?.slug || "");
     const r = bySlug(slug);
     if (!r) return shell("Owner Panel", `<section class="card">${empty("Restaurant not found")}<a class="btn primary" href="#/register">Register</a></section>`, "owner");
-    const unlocked = localStorage.getItem("restoqr_owner_" + r.slug) === "yes";
-    if (!unlocked) {
-      return shell("Owner Login", `
-        <section class="card" style="max-width:440px">
-          <div class="section-head"><div><h2>${esc(r.name)}</h2><p>Enter the owner PIN shared during registration.</p></div></div>
-          ${selectRestaurant(r.slug)}
-          ${field("Owner PIN", "owner-pin", "input", "Enter PIN", "password")}
-          <button class="btn primary block" data-action="owner-login" data-slug="${r.slug}">Open Restaurant Panel</button>
-        </section>`, "owner");
+    // Firebase mode: require signed-in owner email linked to this restaurant
+    if (firebaseMode) {
+      if (!currentUser) return authLoginView("owner");
+      const linkedSlug = ownerSlugForUser(currentUser);
+      if (!linkedSlug) {
+        // Allow admin to open any restaurant panel
+        if (!isAdmin(currentUser)) return authLoginView("owner", "Your account is not linked to any restaurant.");
+      } else if (linkedSlug !== r.slug) {
+        // Redirect owner to their own restaurant
+        location.replace("#/owner?resto=" + linkedSlug);
+        return "";
+      }
+    } else {
+      const unlocked = localStorage.getItem("restoqr_owner_" + r.slug) === "yes";
+      if (!unlocked) {
+        return shell("Owner Login", `
+          <section class="card" style="max-width:440px">
+            <div class="section-head"><div><h2>${esc(r.name)}</h2><p>Enter the owner PIN shared during registration.</p></div></div>
+            ${selectRestaurant(r.slug)}
+            ${field("Owner PIN", "owner-pin", "input", "Enter PIN", "password")}
+            <button class="btn primary block" data-action="owner-login" data-slug="${r.slug}">Open Restaurant Panel</button>
+          </section>`, "owner");
+      }
     }
+    const signOutBtn = firebaseMode ? `<button class="btn" style="margin-left:auto" data-action="auth-signout">Sign Out</button>` : `<button class="btn" data-action="owner-logout" data-slug="${r.slug}">Logout</button>`;
     return `
       ${topbar("owner", r)}
       <main class="wrap">
-        <div class="tabs">
+        <div class="tabs" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
           ${["overview", "menu", "addons", "tables", "kitchen", "billing", "feedback", "analytics", "settings"].map(t => `<button class="tab-btn ${ownerTab === t ? "active" : ""}" data-action="owner-tab" data-tab="${t}">${title(t)}</button>`).join("")}
+          ${signOutBtn}
         </div>
         ${ownerContent(r)}
       </main>`;
@@ -1317,7 +1431,60 @@
     const style = document.createElement("style");
     style.id = "staff-css";
     style.textContent = `
-      .staff-shell { min-height:100vh; background:#f5f0e8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+      .staff-shell { min-height:100vh; background:#f0ebe0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+      .staff-topbar { position:sticky;top:0;z-index:200;background:linear-gradient(135deg,#1e0f06 0%,#2a1a0e 100%);color:#f5ead8;display:flex;align-items:center;justify-content:space-between;padding:14px 18px;gap:10px;box-shadow:0 2px 12px rgba(0,0,0,.35); }
+      .staff-topbar h1 { font-size:17px;font-weight:800;color:#f5ead8;margin:0;letter-spacing:.01em;display:flex;align-items:center;gap:8px; }
+      .staff-topbar .staff-resto-name { font-size:11px;color:#c4a96a;margin:0 0 2px;letter-spacing:.04em;text-transform:uppercase;font-weight:600; }
+      .staff-tab-bar { display:flex;background:#16090200;border-bottom:1px solid #e0d5c5;background:#fff;box-shadow:0 1px 0 #e0d5c5; }
+      .staff-tab-bar button { flex:1;padding:13px 4px;background:none;border:none;color:#9a8878;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:.03em;border-bottom:3px solid transparent;transition:all .15s; }
+      .staff-tab-bar button.active { color:#2a1a0e;border-bottom-color:#c4a96a;background:#fdf8f0; }
+      .staff-body { padding:16px;padding-bottom:100px; }
+      .staff-empty { text-align:center;color:#9a8878;padding:48px 20px;font-size:14px; }
+      .staff-empty .se-icon { font-size:44px;margin-bottom:12px; }
+      .staff-section-lbl { font-size:11px;font-weight:800;color:#9a8878;text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px;padding-bottom:8px;border-bottom:1.5px solid #e8dcc8; }
+      .s-order-card { background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;border:1px solid #e8dcc8;box-shadow:0 1px 4px rgba(42,26,14,.06); }
+      .s-order-card .oc-head { display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px; }
+      .s-order-card .oc-table { font-size:20px;font-weight:800;color:#2a1a0e; }
+      .s-order-card .oc-id { font-size:11px;color:#9a8878;margin-top:3px; }
+      .s-order-card .oc-items { border-top:1px dashed #e8dcc8;padding-top:10px;margin-bottom:10px; }
+      .s-order-card .oc-item-row { display:flex;justify-content:space-between;font-size:14px;padding:4px 0;color:#3a2510; }
+      .s-order-card .oc-total { display:flex;justify-content:space-between;font-weight:800;font-size:15px;border-top:1.5px solid #e8dcc8;padding-top:10px;color:#2a1a0e;margin-top:2px; }
+      .s-order-card .oc-actions { display:flex;gap:8px;margin-top:14px;flex-wrap:wrap; }
+      .s-order-card .oc-note { font-size:12px;color:#9a8878;background:#faf5ec;border-radius:8px;padding:7px 10px;margin:6px 0;border-left:3px solid #c4a96a; }
+      .spill { display:inline-block;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.02em; }
+      .spill.green { background:#d4edda;color:#155724; }
+      .spill.amber { background:#fff3cd;color:#7a5c1e; }
+      .spill.red   { background:#f8d7da;color:#721c24; }
+      .spill.blue  { background:#cce5ff;color:#004085; }
+      .spill.gray  { background:#e8dcc8;color:#5a4030; }
+      .sbtn { flex:1;min-width:0;padding:12px 10px;border-radius:10px;font-size:13px;font-weight:700;border:none;cursor:pointer;transition:transform .1s,opacity .1s,box-shadow .1s;text-align:center; }
+      .sbtn:active { transform:scale(0.97);opacity:.85; }
+      .sbtn.primary { background:#c4a96a;color:#2a1a0e;box-shadow:0 2px 6px rgba(196,169,106,.35); }
+      .sbtn.ok      { background:#27ae60;color:#fff;box-shadow:0 2px 6px rgba(39,174,96,.3); }
+      .sbtn.danger  { background:#c0392b;color:#fff;box-shadow:0 2px 6px rgba(192,57,43,.3); }
+      .sbtn.plain   { background:#f0e8d8;color:#5a4030;border:1px solid #d4c4a8; }
+      .staff-login-wrap { padding:24px 16px; }
+      .staff-login-card { background:#fff;border-radius:18px;padding:28px 24px;border:1px solid #e8dcc8;max-width:380px;margin:0 auto;box-shadow:0 4px 20px rgba(42,26,14,.1); }
+      .staff-login-card h2 { margin:0 0 6px;color:#2a1a0e;font-size:22px;font-weight:800; }
+      .staff-login-card p { color:#9a8878;font-size:13px;margin:0 0 20px; }
+      .staff-input { width:100%;box-sizing:border-box;padding:13px 14px;border:1.5px solid #e8dcc8;border-radius:10px;font-size:16px;margin-bottom:12px;background:#faf5ec;color:#2a1a0e;outline:none;transition:border-color .15s; }
+      .staff-input:focus { border-color:#c4a96a;box-shadow:0 0 0 3px rgba(196,169,106,.15); }
+      .staff-role-row { display:flex;gap:8px;margin-bottom:20px; }
+      .role-btn { flex:1;padding:12px;border-radius:10px;border:1.5px solid #e8dcc8;background:#faf5ec;color:#5a4030;font-size:13px;font-weight:600;cursor:pointer;text-align:center;transition:all .15s; }
+      .role-btn.selected { background:#c4a96a;border-color:#c4a96a;color:#2a1a0e;box-shadow:0 2px 8px rgba(196,169,106,.3); }
+      .waiter-alert { background:linear-gradient(135deg,#c0392b,#a93226);color:#fff;border-radius:14px;padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 3px 12px rgba(192,57,43,.3); }
+      .waiter-alert .wa-info { flex:1; }
+      .waiter-alert .wa-table { font-size:18px;font-weight:800; }
+      .waiter-alert .wa-msg { font-size:12px;opacity:.85;margin-top:2px; }
+      .floor-plan-wrap { background:linear-gradient(135deg,#1a0f06 0%,#2a1a0e 100%);border-radius:16px;padding:18px 14px 14px;border:2px solid #4a2f18;box-shadow:inset 0 2px 8px rgba(0,0,0,.4),0 4px 20px rgba(0,0,0,.3);overflow:hidden;position:relative; }
+      .floor-plan-svg { width:100%;display:block; }
+      .tbl-sheet-bg { position:fixed;inset:0;background:rgba(42,26,14,.55);z-index:500;display:flex;align-items:flex-end;backdrop-filter:blur(2px); }
+      .tbl-sheet { background:#fff;border-radius:22px 22px 0 0;padding:20px 18px 44px;width:100%;box-sizing:border-box;max-height:85vh;overflow-y:auto;box-shadow:0 -8px 32px rgba(0,0,0,.2); }
+      .tbl-sheet-handle { width:40px;height:4px;background:#e8dcc8;border-radius:2px;margin:0 auto 18px; }
+      .svg-chair { fill:#2a1408;stroke:#5a3018;stroke-width:1; }
+      .svg-table-no { fill:#c4a96a;font-size:11px;font-weight:800;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central; }
+      .svg-amt { fill:#a08060;font-size:7px;font-weight:600;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central; }
+      @keyframes pulse-red { 0%,100%{box-shadow:0 0 0 3px rgba(231,76,60,.35);}50%{box-shadow:0 0 0 7px rgba(231,76,60,.1);} }
       .staff-topbar { position:sticky;top:0;z-index:200;background:#2a1a0e;color:#f5ead8;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:10px; }
       .staff-topbar h1 { font-size:16px;font-weight:700;color:#f5ead8;margin:0;letter-spacing:.02em; }
       .staff-topbar .staff-resto-name { font-size:12px;color:#c4a96a;margin:0; }
@@ -1438,27 +1605,57 @@
   function staffMainView(r) {
     const role = staffRole(r.slug);
     const pendingAlerts = state.orders.filter(o => o.restaurantSlug === r.slug && o.waiterRequest && o.status !== "completed").length;
+    const activeKitchen = state.orders.filter(o => o.restaurantSlug === r.slug && (o.paymentStatus==="paid"||o.paymentStatus==="cash_sent"||o.paymentStatus==="cash_accepted") && o.status !== "completed" && o.status !== "delivered").length;
+    const activeBilling = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed").length;
 
-    const tabs = [
-      { id: "tables",  label: "Tables" + (pendingAlerts ? ` (${pendingAlerts})` : "") },
-      { id: "kitchen", label: "Kitchen" },
-      { id: "billing", label: "Billing" },
-    ];
+    // Role-based tabs
+    let tabs = [];
+    if (role === "waiter") {
+      tabs = [
+        { id: "waiter",  label: "🛎 Requests" + (pendingAlerts ? ` (${pendingAlerts})` : "") },
+        { id: "tables",  label: "🗺 Floor Plan" },
+      ];
+      if (!["waiter","tables"].includes(staffTab)) staffTab = "waiter";
+    } else if (role === "kitchen") {
+      tabs = [
+        { id: "kitchen", label: "🍳 Kitchen" + (activeKitchen ? ` (${activeKitchen})` : "") },
+        { id: "tables",  label: "🗺 Floor Plan" },
+      ];
+      if (!["kitchen","tables"].includes(staffTab)) staffTab = "kitchen";
+    } else if (role === "billing") {
+      tabs = [
+        { id: "billing", label: "💳 Billing" + (activeBilling ? ` (${activeBilling})` : "") },
+        { id: "tables",  label: "🗺 Floor Plan" },
+      ];
+      if (!["billing","tables"].includes(staffTab)) staffTab = "billing";
+    } else {
+      tabs = [
+        { id: "tables",  label: "🗺 Tables" + (pendingAlerts ? ` (${pendingAlerts})` : "") },
+        { id: "kitchen", label: "🍳 Kitchen" },
+        { id: "billing", label: "💳 Billing" },
+      ];
+    }
 
     let body = "";
+    if (staffTab === "waiter")  body = staffWaiterView(r);
     if (staffTab === "tables")  body = staffTablesView(r);
     if (staffTab === "kitchen") body = staffKitchenView(r);
     if (staffTab === "billing") body = staffBillingView(r);
 
     const sheet = staffSheetTable !== null ? staffTableSheetView(r, staffSheetTable) : "";
 
+    const roleLabel = role === "kitchen" ? "👨‍🍳 Kitchen" : role === "billing" ? "💳 Billing" : "🛎 Waiter";
+    const roleColor = role === "kitchen" ? "#e07a30" : role === "billing" ? "#2980b9" : "#c4a96a";
+
     return `<div class="staff-shell" id="staff-app">
       <div class="staff-topbar">
-        <div>
-          <p class="staff-resto-name">${esc(r.name)}</p>
-          <h1>${role === "kitchen" ? "👨‍🍳 Kitchen" : role === "billing" ? "💳 Billing" : "🛎 Waiter"} Dashboard</h1>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div>
+            <p class="staff-resto-name">${esc(r.name)}</p>
+            <h1 style="display:flex;align-items:center;gap:6px">${roleLabel} <span style="font-size:11px;font-weight:600;background:${roleColor}22;color:${roleColor};border-radius:20px;padding:2px 8px;letter-spacing:.04em;text-transform:uppercase">${role}</span></h1>
+          </div>
         </div>
-        <button class="sbtn plain" style="flex:none;padding:8px 12px;font-size:12px" data-action="staff-logout" data-slug="${r.slug}">Logout</button>
+        <button class="sbtn plain" style="flex:none;padding:8px 14px;font-size:12px;background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#f5ead8" data-action="staff-logout" data-slug="${r.slug}">⎋ Logout</button>
       </div>
       <div class="staff-tab-bar">
         ${tabs.map(t => `<button class="${staffTab===t.id?"active":""}" data-action="staff-tab" data-tab="${t.id}">${t.label}</button>`).join("")}
@@ -1466,6 +1663,78 @@
       <div class="staff-body">${body}</div>
       ${sheet}
     </div>`;
+  }
+
+  // ================================================================
+  // STAFF DASHBOARD — waiter view (requests + active orders)
+  // ================================================================
+  function staffWaiterView(r) {
+    const allActive = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
+    const alerts = allActive.filter(o => o.waiterRequest);
+    const regularOrders = allActive.filter(o => !o.waiterRequest).sort((a,b) => b.createdAt - a.createdAt);
+
+    let html = "";
+
+    // Alert banner section
+    if (alerts.length) {
+      html += `<div class="staff-section-lbl" style="color:#e74c3c;border-color:#f5c6c6">⚡ Urgent — Customer Requests (${alerts.length})</div>`;
+      alerts.forEach(o => {
+        const isBill = o.waiterRequest === "bill";
+        html += `<div style="background:${isBill?"#fff5f0":"#fff0f0"};border:2px solid ${isBill?"#e07a30":"#e74c3c"};border-radius:14px;padding:16px;margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div>
+              <div style="font-size:22px;font-weight:800;color:#2a1a0e">${isBill?"💳":"🔔"} Table ${o.table}</div>
+              <div style="font-size:13px;color:#7a4030;margin-top:4px">${isBill?"Wants the bill":"Called the waiter"} · #${o.id.slice(-5).toUpperCase()} · ${money(o.total)}</div>
+              <div style="font-size:11px;color:#9a8878;margin-top:2px">${new Date(o.createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
+            </div>
+            <button class="sbtn ok" style="flex:none;padding:10px 16px;font-size:13px" data-action="staff-dismiss-waiter" data-id="${o.id}">✓ Done</button>
+          </div>
+          <div style="margin-top:12px;border-top:1px dashed #e8b8a8;padding-top:10px">
+            ${(o.items||[]).map(i=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;color:#3a2510"><span>${esc(i.name)} × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join("")}
+            ${(o.addons||[]).map(a=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:2px 0;color:#9a8878"><span>+ ${esc(a.name)} × ${a.qty||1}</span><span>${money(a.price*(a.qty||1))}</span></div>`).join("")}
+            <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;margin-top:6px;padding-top:6px;border-top:1px solid #e8dcc8;color:#2a1a0e"><span>Total</span><span>${money(o.total)}</span></div>
+          </div>
+        </div>`;
+      });
+    } else {
+      html += `<div style="background:linear-gradient(135deg,#d4edda,#c3e6cb);border-radius:14px;padding:16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
+        <div style="font-size:28px">✅</div>
+        <div><div style="font-weight:700;color:#155724;font-size:15px">All clear</div><div style="font-size:13px;color:#1e7e34">No waiter requests right now</div></div>
+      </div>`;
+    }
+
+    // Active orders overview
+    if (regularOrders.length) {
+      html += `<div class="staff-section-lbl" style="margin-top:6px">📋 Active Tables (${regularOrders.length})</div>`;
+      // Group by table
+      const tableMap = {};
+      regularOrders.forEach(o => { if(!tableMap[o.table]) tableMap[o.table]=[]; tableMap[o.table].push(o); });
+      Object.entries(tableMap).sort((a,b)=>Number(a[0])-Number(b[0])).forEach(([table, orders]) => {
+        const total = orders.reduce((s,o)=>s+o.total,0);
+        const statuses = orders.map(o=>o.status);
+        const statusLabel = statuses.includes("ready") ? `<span class="spill green">🛎 Ready to serve</span>`
+          : statuses.includes("preparing") ? `<span class="spill blue">👨‍🍳 Preparing</span>`
+          : statuses.includes("pending") ? `<span class="spill amber">⏳ In kitchen</span>`
+          : `<span class="spill gray">Payment pending</span>`;
+        html += `<div class="s-order-card" style="border-left:4px solid #c4a96a">
+          <div class="oc-head">
+            <div>
+              <div class="oc-table">Table ${table}</div>
+              <div class="oc-id">${orders.length} order${orders.length>1?"s":""} · ${new Date(orders[0].createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
+            </div>
+            ${statusLabel}
+          </div>
+          <div class="oc-items">
+            ${orders.flatMap(o=>o.items||[]).reduce((acc,i)=>{const e=acc.find(x=>x.id===i.id);if(e)e.qty+=i.qty;else acc.push({...i});return acc;},[]).map(i=>`<div class="oc-item-row"><span>${esc(i.name)} × ${i.qty}</span><span style="color:#9a8878">${money(i.price*i.qty)}</span></div>`).join("")}
+          </div>
+          <div class="oc-total"><span>Table Total</span><span>${money(total)}</span></div>
+        </div>`;
+      });
+    } else if (!alerts.length) {
+      html += `<div class="staff-empty"><div class="se-icon">🪑</div>No active orders right now</div>`;
+    }
+
+    return html;
   }
 
   // ================================================================
@@ -1579,19 +1848,24 @@
         <div class="tbl-sheet-handle"></div>
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
           <div><div style="font-size:26px;font-weight:800;color:#2a1a0e">Table ${tableNo}</div><div style="margin-top:4px">${statusPill}</div></div>
-          <button class="sbtn plain" style="flex:none;padding:8px 12px;font-size:13px" data-action="staff-close-sheet">Close</button>
+          <button class="sbtn plain" style="flex:none;padding:8px 12px;font-size:13px" data-action="staff-close-sheet">✕ Close</button>
         </div>
-        ${hasAlert ? `<div style="background:#fff0ee;border:1.5px solid #e74c3c;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
-          <div><div style="font-size:13px;font-weight:700;color:#c0392b">${orders.find(o=>o.waiterRequest)?.waiterRequest==="bill"?"💳 Bill requested":"🔔 Waiter called"}</div><div style="font-size:12px;color:#9a8878;margin-top:2px">Customer needs attention</div></div>
-          <button class="sbtn plain" style="flex:none;font-size:12px;padding:7px 12px" data-action="staff-dismiss-table-alert" data-ids="${orderIds}">Dismiss</button>
+        ${hasAlert ? `<div style="background:linear-gradient(135deg,#fff0ee,#fde8e4);border:2px solid #e74c3c;border-radius:14px;padding:14px 16px;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+            <div>
+              <div style="font-size:15px;font-weight:800;color:#c0392b">${orders.find(o=>o.waiterRequest)?.waiterRequest==="bill"?"💳 Bill requested":"🔔 Waiter called"}</div>
+              <div style="font-size:12px;color:#9a8878;margin-top:3px">Customer needs attention at this table</div>
+            </div>
+            <button class="sbtn ok" style="flex:none;padding:10px 16px;font-size:13px;white-space:nowrap" data-action="staff-dismiss-table-alert" data-ids="${orderIds}">✓ Done</button>
+          </div>
         </div>` : ""}
         ${orders.length===0
           ? `<div class="staff-empty" style="padding:24px"><div class="se-icon">🪑</div>Table is free</div>`
-          : `<div style="margin-bottom:14px">
-              ${merged.map(i=>`<div style="display:flex;justify-content:space-between;font-size:14px;padding:4px 0">${esc(i.name)} × ${i.qty}<span>${money(i.price*i.qty)}</span></div>`).join("")}
-              <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:1px solid #e8dcc8;padding-top:8px;margin-top:4px"><span>Total</span><span>${money(grandTotal)}</span></div>
+          : `<div style="background:#faf5ec;border-radius:12px;padding:12px 14px;margin-bottom:14px">
+              ${merged.map(i=>`<div style="display:flex;justify-content:space-between;font-size:14px;padding:4px 0;color:#3a2510"><span>${esc(i.name)} × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join("")}
+              <div style="display:flex;justify-content:space-between;font-weight:800;font-size:15px;border-top:1.5px solid #e8dcc8;padding-top:10px;margin-top:6px;color:#2a1a0e"><span>Total</span><span>${money(grandTotal)}</span></div>
             </div>`}
-        <div style="display:flex;flex-direction:column;gap:9px;margin-top:16px">
+        <div style="display:flex;flex-direction:column;gap:9px;margin-top:4px">
           ${anyWaiting ? `<button class="sbtn ok" data-action="staff-confirm-upi" data-ids="${waitingIds}">✓ UPI Payment Received</button>` : ""}
           ${anyCashPending ? `<button class="sbtn primary" data-action="staff-send-cash-kitchen" data-ids="${cashPendingIds}">🍳 Send to Kitchen (Cash)</button>` : ""}
           ${anyCashSent ? `<button class="sbtn ok" data-action="staff-confirm-cash" data-ids="${cashSentIds}">💵 Cash Received</button>` : ""}
@@ -1708,8 +1982,16 @@
           <input id="set-table-count" type="number" min="1" max="100" value="${r.tableCount || r.tables.length || 4}" placeholder="e.g. 12" style="max-width:160px">
           <p class="muted small" style="margin:4px 0 0">Staff dashboard will display this many tables in the floor plan.</p>
         </div>
+        ${firebaseMode ? `
+          <div class="field">
+            <label>Owner Login Email <span class="muted">(Firebase Auth — used to access this panel)</span></label>
+            <input id="set-owner-email" type="email" placeholder="owner@email.com" value="${esc(r.ownerEmail || "")}">
+            <p class="muted small" style="margin:4px 0 0">Create this account in Firebase Console → Authentication → Users, then paste the email here and save.</p>
+          </div>` : ""}
         <button class="btn primary" data-action="save-settings" data-slug="${r.slug}">Save Settings</button>
-        <button class="btn" data-action="owner-logout" data-slug="${r.slug}">Logout</button>
+        ${firebaseMode
+          ? `<button class="btn" data-action="auth-signout">Sign Out</button>`
+          : `<button class="btn" data-action="owner-logout" data-slug="${r.slug}">Logout</button>`}
       </section>
 
       <section class="card" style="max-width:640px;margin-top:14px">
@@ -2121,6 +2403,8 @@
     const action = el.dataset.action;
     if (action === "admin-login") return adminLogin();
     if (action === "admin-logout") return localStorage.removeItem("restoqr_admin_unlocked"), render();
+    if (action === "auth-login") return firebaseAuthLogin(el.dataset.role);
+    if (action === "auth-signout") return authSignOut();
     if (action === "register") return registerRestaurant();
     if (action === "delete-resto") {
       if (!confirm("Delete " + (bySlug(el.dataset.slug)?.name || "this restaurant") + "? This cannot be undone.")) return;
@@ -2160,12 +2444,23 @@
     if (action === "set-star") return setStar(el);
     if (action === "submit-feedback") return submitFeedback(el);
     if (action === "mark-paid") return updateOrder(el.dataset.id, o => { o.paymentStatus = "paid"; o.status = "pending"; });
-    if (action === "mark-paid-table") return el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { o.paymentStatus = "paid"; o.status = "pending"; }));
-    if (action === "accept-cash") return updateOrder(el.dataset.id, o => { o.paymentStatus = "cash_sent"; o.status = "pending"; });
-    if (action === "accept-cash-table") return el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { if (o.paymentStatus === "cash_pending") { o.paymentStatus = "cash_sent"; o.status = "pending"; } }));
-    if (action === "cash-received-table") return el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { if (o.paymentStatus === "cash_sent") o.paymentStatus = "cash_accepted"; }));
+    if (action === "mark-paid-table") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      return mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o) { o.paymentStatus = "paid"; o.status = "pending"; } }));
+    }
+    if (action === "accept-cash-table") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      return mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o && o.paymentStatus === "cash_pending") { o.paymentStatus = "cash_sent"; o.status = "pending"; } }));
+    }
+    if (action === "cash-received-table") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      return mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o && o.paymentStatus === "cash_sent") o.paymentStatus = "cash_accepted"; }));
+    }
     if (action === "close-order") return updateOrder(el.dataset.id, o => o.status = "completed");
-    if (action === "close-table") return el.dataset.ids.split(",").forEach(id => updateOrder(id, o => o.status = "completed"));
+    if (action === "close-table") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      return mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o) o.status = "completed"; }));
+    }
     if (action === "reprint-bill") return printReceipt(el.dataset.id);
     if (action === "print-table-bill") return printTableBill(el.dataset.ids.split(","));
     if (action === "advance-order") return updateOrder(el.dataset.id, o => o.status = el.dataset.next);
@@ -2178,6 +2473,8 @@
       if (entered === generateMasterKey(loginSlug)) {
         localStorage.setItem(staffKeyFor(loginSlug), "yes");
         localStorage.setItem("restoqr_staff_role_" + loginSlug, staffSelectedRole);
+        // Default tab based on role
+        staffTab = staffSelectedRole === "kitchen" ? "kitchen" : staffSelectedRole === "billing" ? "billing" : "waiter";
         toast("Welcome! Logged in as " + staffSelectedRole);
         return render();
       } else {
@@ -2195,12 +2492,36 @@
     if (action === "staff-tab") { staffTab = el.dataset.tab; staffSheetTable = null; return render(); }
     if (action === "staff-open-table") { staffSheetTable = Number(el.dataset.table); return render(); }
     if (action === "staff-close-sheet") { staffSheetTable = null; return render(); }
-    if (action === "staff-dismiss-waiter") { return updateOrder(el.dataset.id, o => { delete o.waiterRequest; }); }
-    if (action === "staff-dismiss-table-alert") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { delete o.waiterRequest; })); return; }
-    if (action === "staff-confirm-upi") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { o.paymentStatus = "paid"; o.status = "pending"; })); return toast("✅ UPI payment confirmed"); }
-    if (action === "staff-send-cash-kitchen") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { if (o.paymentStatus==="cash_pending") { o.paymentStatus="cash_sent"; o.status="pending"; } })); return toast("🍳 Sent to kitchen"); }
-    if (action === "staff-confirm-cash") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { if (o.paymentStatus==="cash_sent") o.paymentStatus="cash_accepted"; })); return toast("💵 Cash received"); }
-    if (action === "staff-close-table") { el.dataset.ids.split(",").forEach(id => updateOrder(id, o => o.status="completed")); staffSheetTable=null; return toast("🔒 Table closed"); }
+    if (action === "staff-dismiss-waiter") {
+      mutate(s => { const o = s.orders.find(x => x.id === el.dataset.id); if (o) delete o.waiterRequest; });
+      return;
+    }
+    if (action === "staff-dismiss-table-alert") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o) delete o.waiterRequest; }));
+      return;
+    }
+    if (action === "staff-confirm-upi") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o) { o.paymentStatus = "paid"; o.status = "pending"; } }));
+      return toast("✅ UPI payment confirmed");
+    }
+    if (action === "staff-send-cash-kitchen") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o && o.paymentStatus === "cash_pending") { o.paymentStatus = "cash_sent"; o.status = "pending"; } }));
+      return toast("🍳 Sent to kitchen");
+    }
+    if (action === "staff-confirm-cash") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o && o.paymentStatus === "cash_sent") o.paymentStatus = "cash_accepted"; }));
+      return toast("💵 Cash received");
+    }
+    if (action === "staff-close-table") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o) o.status = "completed"; }));
+      staffSheetTable = null;
+      return toast("🔒 Table closed");
+    }
     // ── End Staff Dashboard actions ──────────────────────────────────
 
     if (action === "toggle-sound") {
@@ -2213,11 +2534,29 @@
   }
 
   function adminLogin() {
+    // Demo / local-storage mode only
     if (val("admin-pin") === state.meta.adminPin) {
       localStorage.setItem("restoqr_admin_unlocked", "yes");
       toast("Admin unlocked");
       render();
     } else toast("Wrong passcode");
+  }
+
+  function firebaseAuthLogin(role) {
+    const email    = (document.getElementById("auth-email")?.value || "").trim();
+    const password = (document.getElementById("auth-password")?.value || "").trim();
+    const errEl    = document.getElementById("auth-err");
+    const btn      = document.getElementById("auth-submit-btn");
+    if (!email || !password) {
+      if (errEl) { errEl.textContent = "Please enter your email and password."; errEl.style.display = "block"; }
+      return;
+    }
+    if (btn) { btn.textContent = "Signing in…"; btn.disabled = true; }
+    if (errEl) errEl.style.display = "none";
+    authSignIn(email, password, errMsg => {
+      if (errEl) { errEl.textContent = errMsg; errEl.style.display = "block"; }
+      if (btn)  { btn.textContent = "Sign In"; btn.disabled = false; }
+    });
   }
 
   function registerRestaurant() {
@@ -2294,7 +2633,10 @@
       r.paymentQr = val("set-qr") || DEFAULT_QR;
       const tc = Number(val("set-table-count"));
       if (tc > 0) r.tableCount = tc;
+      const email = val("set-owner-email");
+      if (email) r.ownerEmail = email.toLowerCase();
     });
+    toast("Settings saved!");
   }
 
   function placeOrder(slug) {

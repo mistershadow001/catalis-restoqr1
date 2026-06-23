@@ -1,6 +1,6 @@
 (function () {
   const KEY = "restoqr_cloud_state_v1";
-  const DEFAULT_QR = "./assets/phonepe-qr.png";
+  const DEFAULT_QR = "./assets/phonepe-qr.jpeg";
   const app = document.getElementById("app");
   const toastEl = document.getElementById("toast");
 
@@ -148,6 +148,40 @@
     return html(homeView());
   }
 
+  /* ---------------- icons & decorative illustrations ---------------- */
+
+  function icon(name) {
+    const icons = {
+      scan: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>`,
+      orders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3.5h6a1 1 0 0 1 1 1V6H8V4.5a1 1 0 0 1 1-1Z"/><path d="m8.5 12 2 2 4-4.5"/><path d="M8 17h8"/></svg>`,
+      growth: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M4 19h16"/><path d="M7 19v-5"/><path d="M12 19V8"/><path d="M17 19v-9"/><path d="m14 5 3-2 3 2"/><path d="M17 3v4"/></svg>`,
+      customize: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87 2 2 0 1 1-2.83 2.83 1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.55V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.87.34 2 2 0 1 1-2.83-2.83 1.7 1.7 0 0 0 .34-1.87A1.7 1.7 0 0 0 4.1 13.5H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.87 2 2 0 1 1 2.83-2.83 1.7 1.7 0 0 0 1.87.34H10a1.7 1.7 0 0 0 1.03-1.55V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.87-.34 2 2 0 1 1 2.83 2.83 1.7 1.7 0 0 0-.34 1.87V10c.14.62.58 1.13 1.1 1.4"/></svg>`
+    };
+    return icons[name] || "";
+  }
+
+  // Decorative fort skyline used behind the culture banner — a silhouette, not a portrait
+  // or named figure, kept generic so it reads as texture rather than a depiction.
+  function skylineArt() {
+    return `
+      <svg class="skyline" viewBox="0 0 1200 220" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 220V150h40V120h24v30h28v-50h20v20h18V96h26v54h30v-40h22v18h20v-60h30v34h24V96h40v54h26v-70h22v26h18v-30h32v44h30v-50h24v22h20V70h36v60h24v-40h20v60h30v-30h26v50h36v20H0Z" fill="#5c2510" opacity=".55"/>
+        <path d="M520 220v-86h14v-20h10v20h12v-40h16v18h10V72h18v40h12v-20h10v50h14v-46h10v66h170v16Z" fill="#3f1808" opacity=".5"/>
+      </svg>
+      <svg class="sun" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="50" cy="50" r="26" fill="#fff1cf" opacity=".9"/>
+        <circle cx="50" cy="50" r="38" fill="none" stroke="#fff1cf" stroke-width="2" opacity=".35"/>
+      </svg>`;
+  }
+
+  function featureCard(name, title, text) {
+    return `<div class="feature-card">
+      <div class="feature-icon">${icon(name)}</div>
+      <h3>${title}</h3>
+      <p>${text}</p>
+    </div>`;
+  }
+
   function homeView() {
     const active = state.restaurants.filter(r => r.active).length;
     const waiting = state.orders.filter(o => o.paymentStatus === "waiting").length;
@@ -157,60 +191,100 @@
       <main class="hero">
         <div class="hero-inner">
           <section>
-            <h1>RestoQR Cloud</h1>
-            <p>QR ordering system for restaurants: owner panels, customer menu, kitchen display, billing counter, payment verification, subscriptions, and review collection.</p>
+            
             <div class="hero-actions">
               <a class="btn primary" href="#/register">Register Restaurant</a>
               <a class="btn" href="#/owner">Restaurant Login</a>
-              <a class="btn" href="#/admin">Super Admin</a>
-            </div>
-          </section>
-          <section class="demo-board">
-            <div class="grid-2">
-              ${stat("Restaurants", state.restaurants.length)}
-              ${stat("Active", active)}
-              ${stat("Payment Checks", waiting)}
-              ${stat("Orders Today", today.length)}
-            </div>
-            <div class="card">
-              <div class="section-head">
-                <div><h2>Restaurant Operations</h2><p>Manage registrations, QR ordering, kitchen flow, billing, and customer reviews from one place.</p></div>
-                <span class="pill ok">Ready</span>
-              </div>
-              <div class="row">
-                <span class="muted">Restaurant owner access</span>
-                <a class="btn blue" href="#/owner">Owner Login</a>
-              </div>
+              <a class="btn ghost" href="#/admin">Super Admin</a>
             </div>
           </section>
         </div>
-      </main>`;
+      </main>
+
+      
+
+      <section class="feature-section">
+        <div class="feature-section-inner">
+          <div class="feature-head">
+            <p class="eyebrow center">What you get</p>
+            <h2>Everything a counter needs, nothing it doesn't.</h2>
+            <p>Four moving parts cover the whole table-to-bill flow.</p>
+          </div>
+          <div class="grid-4">
+            ${featureCard("scan", "Scan & order", "Each table gets one QR. Customers see the live menu and order straight from their phone.")}
+            ${featureCard("orders", "Track every order", "Watch new orders land in real time, move them through prep, and confirm payment at the counter.")}
+            ${featureCard("growth", "Built for repeat visits", "Collect a rating after every order and route happy customers straight to your Google listing.")}
+            ${featureCard("customize", "Make it yours", "Add categories, add-ons, and table QR codes in minutes — no designer or developer needed.")}
+          </div>
+        </div>
+      </section>
+
+      <section class="culture-banner">
+        ${skylineArt()}
+        <div class="culture-banner-inner">
+          <p class="kicker">Built for the local favourite</p>
+          <h2>From the corner dhaba to the rooftop café, every table deserves a menu people enjoy using.</h2>
+          <p class="sub">RestoQR runs on the phone your customers already carry, and the counter you already staff.</p>
+        </div>
+      </section>`;
   }
 
   function registerView() {
     return `
       ${topbar("register")}
-      <main class="wrap split">
-        <section class="card">
-          <div class="section-head"><div><h2>Restaurant Registration</h2><p>Restaurant pays you on PhonePe, then you activate it from admin.</p></div></div>
-          <div class="grid-2">
-            ${field("Restaurant Name", "reg-name", "input", "Cafe Aroma")}
-            ${field("Owner Name", "reg-owner", "input", "Owner name")}
-            ${field("Phone", "reg-phone", "input", "Mobile number")}
-            ${field("City", "reg-city", "input", "City")}
-            ${field("Owner Login PIN", "reg-pin", "input", "4 digit PIN", "password")}
-            ${field("UPI ID (VPA)", "reg-upiid", "input", "name@upi or 9999999999@paytm")}
-            ${field("UPI Display Name", "reg-upi", "input", "Shown under payment QR")}
-            ${field("Google Review Link", "reg-review", "input", "Paste Google review link")}
+      <main class="wrap">
+        <div class="culture-banner" style="margin:0 0 26px">
+          <div class="culture-banner-inner" style="padding:36px 24px 30px">
+            <p class="kicker">Get started</p
+            <h2 style="font-size:clamp(22px,3vw,30px)">Bring your restaurant onto RestoQR</h2>
+            <p class="sub">Pay the one-time setup on PhonePe, and our team activates your QR ordering  </p>
           </div>
-          <button class="btn primary" data-action="register">Submit Registration</button>
-        </section>
-        <aside class="qr-box">
-          <p class="small">Pay registration/subscription here</p>
-          <img src="${DEFAULT_QR}" alt="PhonePe QR">
-          <h3>PhonePe accepted here</h3>
-          <p class="small">After payment, admin will activate the restaurant manually.</p>
-        </aside>
+        </div>
+        <div class="split">
+          <section class="card">
+            <div class="section-head"><div><h2>Restaurant Registration</h2><p>Restaurant pays you on PhonePe, then you activate it from admin.</p></div></div>
+            <div class="grid-2">
+              ${field("Restaurant Name", "reg-name", "input", "Cafe Aroma")}
+              ${field("Owner Name", "reg-owner", "input", "Owner name")}
+              ${field("Phone", "reg-phone", "input", "Mobile number")}
+              ${field("City", "reg-city", "input", "City")}
+              ${field("Owner Login PIN", "reg-pin", "input", "4 digit PIN", "password")}
+              ${field("UPI ID (VPA)", "reg-upiid", "input", "name@upi or 9999999999@paytm")}
+              ${field("UPI Display Name", "reg-upi", "input", "Shown under payment QR")}
+              ${field("Google Review Link", "reg-review", "input", "Paste Google review link")}
+            </div>
+            <button class="btn primary" data-action="register">Submit Registration</button>
+          </section>
+          <aside class="qr-box">
+            <p class="small">Pay registration / subscription</p>
+            <div class="qr-img-frame">
+              <img id="reg-placeholder-img" src="./assets/maharaj.png" alt="Make Payment"
+                style="position:absolute;inset:0;width:470px;height:300px;object-fit:cover;transition:opacity 0.45s ease,transform 0.45s ease;border-radius:12px">
+              <img id="reg-qr-img" src="${DEFAULT_QR}" alt="PhonePe QR"
+                style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;padding:10px;box-sizing:border-box;border-radius:12px;opacity:0;transform:scale(0.92);transition:opacity 0.45s ease,transform 0.45s ease;pointer-events:none">
+            </div>
+            <div id="reg-make-payment-wrap">
+              <button class="btn primary block" onclick="(function(){
+                var ph=document.getElementById('reg-placeholder-img');
+                var qr=document.getElementById('reg-qr-img');
+                var btn=document.getElementById('reg-make-payment-wrap');
+                var msg=document.getElementById('reg-payment-msg');
+                ph.style.opacity='0'; ph.style.transform='scale(1.06)';
+                setTimeout(function(){ qr.style.opacity='1'; qr.style.transform='scale(1)'; qr.style.pointerEvents='auto'; }, 250);
+                setTimeout(function(){ btn.style.display='none'; }, 400);
+                setTimeout(function(){ msg.style.display='block'; }, 500);
+              })()">💳 Make Payment</button>
+              <p class="pay-upi-label">PhonePe · GPay · UPI</p>
+              <p class="small" style="opacity:0.5;margin:2px 0 0">We activate your plan after verification</p>
+            </div>
+            <div id="reg-payment-msg" style="display:none">
+              <div class="pay-verify-badge">⏳ Verifying payment</div>
+              <p class="small">It will take a few minutes to verify your payment status. Till then you can proceed with the submission.</p>
+            </div>
+            
+            
+          </aside>
+        </div>
       </main>`;
   }
 
@@ -322,6 +396,37 @@
             <button class="btn" onclick="window.print()">Print</button>
           </div>
         </div>
+      </section>
+      <section class="card" style="margin-top:14px" id="owner-sub-card">
+        <div class="section-head"><div><h2>Subscription Payment</h2><p>Start or renew your RestoQR subscription. </p></div></div>
+        <div class="split" style="align-items:flex-start">
+          <div>
+            <p style="margin:0 0 10px;font-size:14px">Scan and pay on PhonePe to start or renew your subscription. After verification, we will activate your plan shortly.</p>
+            <div id="owner-make-payment-wrap">
+              <button class="btn primary" id="owner-make-payment-btn" onclick="(function(){
+                var ph=document.getElementById('owner-placeholder-img');
+                var qr=document.getElementById('owner-qr-img');
+                var btn=document.getElementById('owner-make-payment-wrap');
+                var msg=document.getElementById('owner-payment-msg');
+                if(ph){ph.style.opacity='0';ph.style.transform='scale(1.05)';}
+                if(qr){setTimeout(function(){qr.style.opacity='1';qr.style.transform='scale(1)';qr.style.pointerEvents='auto';},200);}
+                if(btn){setTimeout(function(){btn.style.display='none';},400);}
+                if(msg){setTimeout(function(){msg.style.display='block';},500);}
+              })()">💳 Make Payment</button>
+            </div>
+            <div id="owner-payment-msg" style="display:none;margin-top:12px">
+              <span class="pill blue">⏳ Verification in progress</span>
+              <p style="margin:8px 0 0;font-size:13px;color:var(--muted)">It will take a few minutes to verify your payment status. Till then you can continue using the panel.</p>
+            </div>
+          </div>
+          <div style="text-align:center">
+            <div id="owner-qr-wrapper" style="position:relative;width:180px;min-height:180px;margin:0 auto 8px">
+              <img id="owner-placeholder-img" src="./assets/maharaj.png" alt="Make Payment" style="width:180px;height:180px;object-fit:cover;border-radius:12px;display:block;transition:opacity 0.4s ease,transform 0.4s ease">
+              <img id="owner-qr-img" src="${DEFAULT_QR}" alt="PhonePe QR" style="width:180px;height:180px;object-fit:contain;border-radius:12px;position:absolute;top:0;left:0;opacity:0;transform:scale(0.92);transition:opacity 0.45s ease,transform 0.45s ease;pointer-events:none">
+            </div>
+            <p class="small muted" style="margin:0">PhonePe accepted here</p>
+          </div>
+        </div>
       </section>`;
   }
 
@@ -340,27 +445,33 @@
       <section class="card" style="margin-top:14px">
         <div class="section-head"><div><h2>Common Restaurant Items</h2><p>Select ready-made items and only change the price.</p></div></div>
         <div class="catalog-grid">
-          ${COMMON_ITEMS.map((c, idx) => `
+          ${COMMON_ITEMS.map((c, idx) => {
+            const dotStyle = `color:${c[3] ? "var(--ok)" : "var(--bad)"}`;
+            return `
             <div class="catalog-card">
-              <div><strong><span style="color:${c[3] ? "var(--ok)" : "var(--bad)"}">●</span> ${esc(c[0])}</strong><p class="muted small">${esc(c[1])}</p></div>
+              <div><strong><span style="${dotStyle}">●</span> ${esc(c[0])}</strong><p class="muted small">${esc(c[1])}</p></div>
               <div class="row-left">
                 <input id="common-price-${idx}" type="number" value="${c[2]}" aria-label="${esc(c[0])} price">
                 <button class="btn primary" data-action="add-common" data-slug="${r.slug}" data-index="${idx}">Add</button>
               </div>
-            </div>`).join("")}
+            </div>`;
+          }).join("")}
         </div>
       </section>
       <section class="card" style="margin-top:14px">
-        ${r.menu.map(i => `
+        ${r.menu.map(i => {
+          const dotStyle = `color:${i.veg ? "var(--ok)" : "var(--bad)"}`;
+          return `
           <div class="list-item menu-item">
-            <div><strong><span style="color:${i.veg ? "var(--ok)" : "var(--bad)"}">●</span> ${esc(i.name)}</strong><p class="muted small">${esc(i.category)} · ${money(i.price)} · ${i.available ? "Available" : "Hidden"}</p></div>
+            <div><strong><span style="${dotStyle}">●</span> ${esc(i.name)}</strong><p class="muted small">${esc(i.category)} · ${money(i.price)} · ${i.available ? "Available" : "Hidden"}</p></div>
             <div class="row-left">
               <input id="price-${i.id}" type="number" value="${i.price}" aria-label="${esc(i.name)} price" style="width:92px">
               <button class="btn blue" data-action="update-price" data-slug="${r.slug}" data-id="${i.id}">Save</button>
               <button class="btn" data-action="toggle-item" data-slug="${r.slug}" data-id="${i.id}">${i.available ? "Hide" : "Show"}</button>
               <button class="btn bad" data-action="delete-item" data-slug="${r.slug}" data-id="${i.id}">Delete</button>
             </div>
-          </div>`).join("")}
+          </div>`;
+        }).join("")}
       </section>`;
   }
 
@@ -458,7 +569,7 @@
         <div class="list-item">
           <div class="row">
             <div>
-              <span style="color:#f59e0b;font-size:18px">${stars(f.stars)}</span>
+              <span style="color:#ffba00;font-size:18px">${stars(f.stars)}</span>
               <p class="muted small" style="margin:4px 0 0">Table ${f.table} · Order #${f.orderId.slice(-5).toUpperCase()} · ${new Date(f.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
             </div>
             <span class="pill ${f.stars >= 4 ? "ok" : f.stars >= 3 ? "warn" : "bad"}">${f.stars}/5</span>
@@ -511,7 +622,7 @@
         </div>
         ${lastOrder && lastOrder.status === "completed" ? customerStatusCard(r, lastOrder) : ""}
         <div class="cat-strip">${unique(r.menu.map(i => i.category)).map(c => `<button class="${c === customerCat ? "active" : ""}" data-action="customer-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
-        <div style="padding-bottom:${cartCount() ? "0" : "80px"}">
+        <div style="${cartCount() ? "padding-bottom:0" : "padding-bottom:80px"}">
           ${items.map(i => customerItem(r, i)).join("") || empty("No items available")}
           ${r.addons.filter(a => a.active).length ? `
             <div style="padding:10px 14px 4px;border-top:1px solid var(--line);margin-top:8px">
@@ -531,8 +642,9 @@
 
   function customerItem(r, i) {
     const q = cart[i.id] || 0;
+    const dotStyle = `color:${i.veg ? "var(--ok)" : "var(--bad)"}`;
     return `<div class="customer-item">
-      <div><strong><span style="color:${i.veg ? "var(--ok)" : "var(--bad)"}">●</span> ${esc(i.name)}</strong><p class="muted small">${money(i.price)}</p></div>
+      <div><strong><span style="${dotStyle}">●</span> ${esc(i.name)}</strong><p class="muted small">${money(i.price)}</p></div>
       ${q ? `<div class="qty"><button data-action="cart-dec" data-id="${i.id}">-</button><strong>${q}</strong><button class="plus" data-action="cart-inc" data-id="${i.id}">+</button></div>` : `<button class="btn primary" data-action="cart-inc" data-id="${i.id}">Add</button>`}
     </div>`;
   }
@@ -575,7 +687,7 @@
             🔵 GPay
           </a>
         </div>
-        ${!r.upiId ? `<p style="color:#ef4444;font-size:12px;margin:4px 0">⚠ UPI ID not set — add in Settings.</p>` : ""}
+        ${!r.upiId ? `<p style="color:#c93333;font-size:12px;margin:4px 0">⚠ UPI ID not set — add in Settings.</p>` : ""}
       </div>
 
       <div style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">
@@ -591,28 +703,38 @@
     const statusSteps = ["payment_check", "pending", "preparing", "ready", "completed"];
     const stepLabels  = ["Payment Check", "Confirmed", "Preparing", "Ready", "Delivered"];
     const currentStep = statusSteps.indexOf(o.status);
-    const statusColor = { payment_check: "#f59e0b", pending: "#3b82f6", preparing: "#8b5cf6", ready: "#10b981", completed: "#10b981" };
-    const color = statusColor[o.status] || "#3b82f6";
+    const statusColor = { payment_check: "#b5790c", pending: "#3e4e7a", preparing: "#8b4513", ready: "#2e7d32", completed: "#2e7d32" };
+    const color = statusColor[o.status] || "#3e4e7a";
+    const trackColor = "#ead9bd";
+    const headerStyle = `background:${color}15;border:1.5px solid ${color};border-radius:12px;padding:16px;margin-bottom:16px`;
+    const badgeStyle = `background:${color};color:#fff;padding:5px 12px;border-radius:20px;font-size:13px;font-weight:600`;
     return `
       <div style="padding:16px 14px">
 
-        <div style="background:${color}15;border:1.5px solid ${color};border-radius:12px;padding:16px;margin-bottom:16px">
+        <div style="${headerStyle}">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <div>
               <p style="margin:0;font-size:12px;color:var(--muted,#6b7280);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Order #${o.id.slice(-5).toUpperCase()}</p>
               <p style="margin:2px 0 0;font-size:13px;color:var(--muted,#6b7280)">Table ${o.table} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
             </div>
-            <span style="background:${color};color:#fff;padding:5px 12px;border-radius:20px;font-size:13px;font-weight:600">${stepLabels[Math.max(0, currentStep)] || "Active"}</span>
+            <span style="${badgeStyle}">${stepLabels[Math.max(0, currentStep)] || "Active"}</span>
           </div>
 
           <div style="display:flex;align-items:center;gap:0;margin:12px 0 4px">
-            ${statusSteps.slice(0, -1).map((s, i) => `
-              <div style="flex:1;height:4px;border-radius:2px;background:${i <= currentStep ? color : "#e5e7eb"}"></div>
-              ${i < statusSteps.length - 2 ? `<div style="width:8px;height:8px;border-radius:50%;background:${i < currentStep ? color : i === currentStep ? color : "#e5e7eb"};flex-shrink:0"></div>` : ""}
-            `).join("")}
+            ${statusSteps.slice(0, -1).map((s, i) => {
+              const barStyle = `flex:1;height:4px;border-radius:2px;background:${i <= currentStep ? color : trackColor}`;
+              const dotStyle = `width:8px;height:8px;border-radius:50%;background:${i <= currentStep ? color : trackColor};flex-shrink:0`;
+              return `
+              <div style="${barStyle}"></div>
+              ${i < statusSteps.length - 2 ? `<div style="${dotStyle}"></div>` : ""}
+            `;
+            }).join("")}
           </div>
           <div style="display:flex;justify-content:space-between;margin-top:6px">
-            ${stepLabels.slice(0, -1).map((l, i) => `<span style="font-size:10px;color:${i <= currentStep ? color : "var(--muted,#9ca3af)"};font-weight:${i === currentStep ? "700" : "400"}">${l}</span>`).join("")}
+            ${stepLabels.slice(0, -1).map((l, i) => {
+              const labelStyle = `font-size:10px;color:${i <= currentStep ? color : "var(--muted,#9ca3af)"};font-weight:${i === currentStep ? "700" : "400"}`;
+              return `<span style="${labelStyle}">${l}</span>`;
+            }).join("")}
           </div>
         </div>
 
@@ -740,6 +862,10 @@
     if (action === "admin-login") return adminLogin();
     if (action === "admin-logout") return localStorage.removeItem("restoqr_admin_unlocked"), render();
     if (action === "register") return registerRestaurant();
+    if (action === "delete-resto") {
+      if (!confirm("Delete " + (bySlug(el.dataset.slug)?.name || "this restaurant") + "? This cannot be undone.")) return;
+      return mutate(s => { s.restaurants = s.restaurants.filter(r => r.slug !== el.dataset.slug); });
+    }
     if (action === "toggle-active") return updateRestaurant(el.dataset.slug, r => r.active = !r.active);
     if (action === "toggle-qr") return updateRestaurant(el.dataset.slug, r => r.qrEnabled = !r.qrEnabled);
     if (action === "extend-sub") return updateRestaurant(el.dataset.slug, r => { r.active = true; r.qrEnabled = true; r.subscriptionEnds = Math.max(Date.now(), r.subscriptionEnds || 0) + days(30); });
@@ -883,7 +1009,7 @@
     const n = Number(el.dataset.star);
     document.querySelectorAll("[data-action='set-star']").forEach((btn, i) => {
       btn.textContent = i < n ? "★" : "☆";
-      btn.style.color = i < n ? "#f59e0b" : "#d1d5db";
+      btn.style.color = i < n ? "#ffba00" : "#e8dcc8";
     });
     document.getElementById("star-row").dataset.selected = n;
   }
@@ -923,8 +1049,15 @@
 
   function topbar(active, r) {
     return `<header class="topbar"><div class="topbar-inner">
-      <a class="brand" href="#/"><span class="mark">RQ</span><span><h1>RestoQR Cloud</h1><p>Restaurant QR ordering</p></span></a>
+      <a class="brand" href="#/"><img src="./assets/logo.png" alt="RestoQR" style="height: 60px;"></a>
       <nav class="nav">
+        <a class="btn ${active === "home" ? "primary" : ""}" href="#/" title="Home" style="display:inline-flex;align-items:center;padding:8px 10px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+            <path d="M3 12L12 3l9 9"/>
+            <path d="M9 21V12h6v9"/>
+            <path d="M5 10v11h14V10"/>
+          </svg>
+        </a>
         <a class="btn ${active === "register" ? "primary" : ""}" href="#/register">Register</a>
         <a class="btn ${active === "owner" ? "primary" : ""}" href="#/owner${r ? "?resto=" + r.slug : ""}">Owner</a>
         <a class="btn ${active === "admin" ? "primary" : ""}" href="#/admin">Admin</a>

@@ -490,7 +490,7 @@
       ${topbar("owner", r)}
       <main class="wrap">
         <div class="tabs">
-          ${["overview", "menu", "addons", "tables", "kitchen", "billing", "feedback", "settings"].map(t => `<button class="tab-btn ${ownerTab === t ? "active" : ""}" data-action="owner-tab" data-tab="${t}">${title(t)}</button>`).join("")}
+          ${["overview", "menu", "addons", "tables", "kitchen", "billing", "feedback", "analytics", "settings"].map(t => `<button class="tab-btn ${ownerTab === t ? "active" : ""}" data-action="owner-tab" data-tab="${t}">${title(t)}</button>`).join("")}
         </div>
         ${ownerContent(r)}
       </main>`;
@@ -504,6 +504,7 @@
     if (ownerTab === "billing") return billingPanel(r);
     if (ownerTab === "feedback") return feedbackPanel(r);
     if (ownerTab === "settings") return settingsPanel(r);
+    if (ownerTab === "analytics") return analyticsPanel(r);
     const open = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
     return `
       <div class="grid-4">
@@ -687,6 +688,14 @@
   function billingPanel(r) {
     const active = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
 
+    // Group active orders by table number
+    const tableMap = {};
+    active.forEach(o => {
+      if (!tableMap[o.table]) tableMap[o.table] = [];
+      tableMap[o.table].push(o);
+    });
+    const tableGroups = Object.entries(tableMap).sort((a, b) => Number(a[0]) - Number(b[0]));
+
     // All completed orders, newest first
     const allCompleted = state.orders
       .filter(o => o.restaurantSlug === r.slug && o.status === "completed")
@@ -710,17 +719,17 @@
 
     return `
       <section class="card">
-        <div class="section-head"><div><h2>Billing Counter</h2><p>Verify PhonePe payments, accept cash, and close tables.</p></div></div>
+        <div class="section-head"><div><h2>Billing Counter</h2><p>Orders grouped by table — close the full table when done.</p></div></div>
         <div class="order-scroll-wrap">
           <div class="order-scroll">
-            ${active.map(billCard).join("") || empty("No active bills")}
+            ${tableGroups.map(([table, orders]) => tableGroupCard(r, table, orders)).join("") || empty("No active bills")}
           </div>
         </div>
       </section>
 
       <section class="card" style="margin-top:14px">
         <div class="section-head">
-          <div><h2>Closed Orders</h2><p>All completed orders — filter by date for verification.</p></div>
+          <div><h2>Closed Tables</h2><p>All completed orders — filter by date for verification.</p></div>
         </div>
 
         <div class="billing-filter-bar">
@@ -756,6 +765,83 @@
       </section>`;
   }
 
+  function tableGroupCard(r, table, orders) {
+    const grandTotal = orders.reduce((s, o) => s + o.total, 0);
+    const allPaid = orders.every(o => o.paymentStatus === "paid" || o.paymentStatus === "cash_accepted");
+    const anyWaiting = orders.some(o => o.paymentStatus === "waiting");
+    const anyCashPending = orders.some(o => o.paymentStatus === "cash_pending");
+    const anyCashSent = orders.some(o => o.paymentStatus === "cash_sent");
+    const upiPaidCount = orders.filter(o => o.paymentStatus === "paid").length;
+    const cashPaidCount = orders.filter(o => o.paymentStatus === "cash_accepted").length;
+    const isSplitPayment = upiPaidCount > 0 && cashPaidCount > 0;
+
+    // Waiting orders (UPI unverified) — only show UPI button for those
+    const waitingIds = orders.filter(o => o.paymentStatus === "waiting").map(o => o.id).join(",");
+    // Cash pending orders — only send those to kitchen
+    const cashPendingIds = orders.filter(o => o.paymentStatus === "cash_pending").map(o => o.id).join(",");
+    const cashSentIds = orders.filter(o => o.paymentStatus === "cash_sent").map(o => o.id).join(",");
+
+    // Overall status label for the table
+    const tableStatus = allPaid ? "ok" : anyCashSent ? "blue" : anyCashPending ? "warn" : "warn";
+    const tableLabel = allPaid
+      ? (isSplitPayment ? "✅ Split Paid (UPI + Cash)" : upiPaidCount ? "✅ UPI Paid" : "✅ Cash Received")
+      : anyCashSent ? "🍳 In Kitchen – Cash Due"
+      : anyCashPending ? "💵 Cash – Awaiting"
+      : "⏳ Check Payment";
+
+    // Merge all items across orders for the combined view
+    const mergedItems = [];
+    orders.forEach(o => {
+      (o.items || []).forEach(i => {
+        const existing = mergedItems.find(x => x.id === i.id);
+        if (existing) existing.qty += i.qty;
+        else mergedItems.push({ ...i });
+      });
+      (o.addons || []).forEach(a => {
+        const existing = mergedItems.find(x => x.name === "+ " + a.name);
+        if (existing) existing.qty += (a.qty || 1);
+        else mergedItems.push({ id: "addon_" + a.id, name: "+ " + a.name, price: a.price, qty: a.qty || 1 });
+      });
+    });
+
+    const orderIds = orders.map(o => o.id).join(",");
+
+    return `<div class="list-item" style="border-left:3px solid ${allPaid ? "var(--ok,#2e7d32)" : anyCashSent ? "#1a73e8" : "#c4a96a"}">
+      <div class="row">
+        <div>
+          <strong>Table ${table}</strong>
+          <p class="muted small">${orders.length} order${orders.length > 1 ? "s" : ""} · ${new Date(orders[0].createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
+        </div>
+        <span class="pill ${tableStatus}">${tableLabel}</span>
+      </div>
+
+      <div style="margin-top:10px">
+        ${mergedItems.map(i => `
+          <div class="row small">
+            <span>${esc(i.name)} × ${i.qty}</span>
+            <span>${money(i.price * i.qty)}</span>
+          </div>`).join("")}
+      </div>
+
+      ${orders.length > 1 ? `
+        <div style="margin-top:8px;padding:8px;background:var(--bg,#f9f5ef);border-radius:8px">
+          <p style="margin:0 0 4px;font-size:11px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">Individual Orders</p>
+          ${orders.map(o => `<p style="margin:2px 0;font-size:12px;color:var(--muted,#6b7280)">#${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · ${money(o.total)} · <span style="color:${o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted"?"var(--ok)":"#b5790c"}">${o.paymentStatus==="paid"?"UPI Paid":o.paymentStatus==="cash_accepted"?"Cash Received":o.paymentStatus==="cash_sent"?"In Kitchen":o.paymentStatus==="cash_pending"?"Cash Pending":"Pending"}</span></p>`).join("")}
+        </div>` : ""}
+
+      <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <strong style="font-size:16px">Total ${money(grandTotal)}</strong>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${anyWaiting ? `<button class="btn ok" data-action="mark-paid-table" data-ids="${waitingIds}">✓ UPI Paid (${waitingIds.split(",").length})</button>` : ""}
+          ${anyCashPending ? `<button class="btn" style="background:#e8d9a0;border:1.5px solid #c4a96a;color:#7a5c1e;font-weight:600" data-action="accept-cash-table" data-ids="${cashPendingIds}">🍳 Send to Kitchen (${cashPendingIds.split(",").length})</button>` : ""}
+          ${anyCashSent ? `<button class="btn ok" data-action="cash-received-table" data-ids="${cashSentIds}">💵 Cash Received</button>` : ""}
+          ${allPaid ? `<button class="btn bad" data-action="close-table" data-ids="${orderIds}">Close Table</button>` : ""}
+          <button class="btn" data-action="print-table-bill" data-ids="${orderIds}">🧾 Print Bill</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function feedbackPanel(r) {
     const fbs = (state.feedbacks || []).filter(f => f.restaurantSlug === r.slug).reverse();
     const avg = fbs.length ? (fbs.reduce((s, f) => s + (f.stars || 0), 0) / fbs.length).toFixed(1) : "-";
@@ -776,6 +862,331 @@
           ${f.text ? `<p style="margin:8px 0 0;font-size:14px">"${esc(f.text)}"</p>` : ""}
         </div>`).join("") || empty("No feedback yet")}
     </section>`;
+  }
+
+
+  function analyticsPanel(r) {
+    // Inject Chart.js from CDN if not already loaded
+    if (!window._chartjsLoaded) {
+      window._chartjsLoaded = true;
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js";
+      s.onload = () => { window._chartjsReady = true; render(); };
+      document.head.appendChild(s);
+    }
+    if (!window._chartjsReady) {
+      return `<section class="card"><div class="empty">Loading charts...</div></section>`;
+    }
+
+    const allOrders = state.orders.filter(o => o.restaurantSlug === r.slug);
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear  = now.getFullYear();
+
+    const selMonth = window._analyticsMonth != null ? window._analyticsMonth : currentMonth;
+    const selYear  = window._analyticsYear  != null ? window._analyticsYear  : currentYear;
+
+    // Months dropdown
+    const monthsWithOrders = [];
+    const seenM = new Set();
+    allOrders.forEach(o => {
+      const d = new Date(o.createdAt);
+      const key = d.getFullYear() + "-" + d.getMonth();
+      if (!seenM.has(key)) { seenM.add(key); monthsWithOrders.push({ year: d.getFullYear(), month: d.getMonth() }); }
+    });
+    monthsWithOrders.sort((a,b) => b.year - a.year || b.month - a.month);
+    if (!monthsWithOrders.length) monthsWithOrders.push({ year: currentYear, month: currentMonth });
+
+    // Filtered orders
+    const orders = allOrders.filter(o => {
+      const d = new Date(o.createdAt);
+      return d.getMonth() === selMonth && d.getFullYear() === selYear;
+    });
+    const paidOrders   = orders.filter(o => o.paymentStatus === "paid" || o.paymentStatus === "cash_accepted");
+    const totalRevenue = paidOrders.reduce((s,o) => s + o.total, 0);
+    const upiRevenue   = orders.filter(o => o.paymentStatus === "paid").reduce((s,o) => s + o.total, 0);
+    const cashRevenue  = orders.filter(o => o.paymentStatus === "cash_accepted").reduce((s,o) => s + o.total, 0);
+    const avgOrderVal  = paidOrders.length ? Math.round(totalRevenue / paidOrders.length) : 0;
+
+    // Items
+    const itemMap = {};
+    orders.forEach(o => {
+      (o.items  || []).forEach(i => { itemMap[i.name] = (itemMap[i.name] || 0) + i.qty; });
+      (o.addons || []).forEach(a => { itemMap[a.name] = (itemMap[a.name] || 0) + (a.qty || 1); });
+    });
+    const topItems = Object.entries(itemMap).sort((a,b) => b[1]-a[1]).slice(0,8);
+
+    // Hours
+    const hourMap = Array(24).fill(0);
+    orders.forEach(o => { hourMap[new Date(o.createdAt).getHours()]++; });
+    const peakHour   = hourMap.indexOf(Math.max(...hourMap));
+
+    // Days of week
+    const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const dayMap   = Array(7).fill(0);
+    orders.forEach(o => { dayMap[new Date(o.createdAt).getDay()]++; });
+    const busiestDay = dayNames[dayMap.indexOf(Math.max(...dayMap))];
+
+    // Daily revenue
+    const daysInMonth  = new Date(selYear, selMonth+1, 0).getDate();
+    const dailyRevenue = Array(daysInMonth).fill(0);
+    paidOrders.forEach(o => { dailyRevenue[new Date(o.createdAt).getDate()-1] += o.total; });
+
+    // Tables
+    const tableMap = {};
+    orders.forEach(o => { tableMap[o.table] = (tableMap[o.table]||0)+1; });
+    const topTables = Object.entries(tableMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const tableOrderCounts = Object.values(tableMap);
+    const repeatTables = tableOrderCounts.filter(c=>c>1).length;
+
+    // Feedback
+    const feedbacks = (state.feedbacks||[]).filter(f => {
+      if (f.restaurantSlug !== r.slug) return false;
+      const d = new Date(f.createdAt);
+      return d.getMonth()===selMonth && d.getFullYear()===selYear;
+    });
+    const avgRating = feedbacks.length ? (feedbacks.reduce((s,f)=>s+f.stars,0)/feedbacks.length) : 0;
+    const starDist  = [5,4,3,2,1].map(s => ({ star:s, count: feedbacks.filter(f=>f.stars===s).length }));
+
+    const monthLabel = new Date(selYear, selMonth, 1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
+
+    // Unique chart IDs per render to avoid canvas reuse issues
+    const uid = Date.now();
+    const cRevenue  = "ch-revenue-"  + uid;
+    const cHours    = "ch-hours-"    + uid;
+    const cDays     = "ch-days-"     + uid;
+    const cPayment  = "ch-payment-"  + uid;
+    const cItems    = "ch-items-"    + uid;
+    const cFeedback = "ch-feedback-" + uid;
+
+    // Schedule chart draws after DOM is painted
+    setTimeout(() => {
+      if (!window.Chart) return;
+
+      const defaults = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: {} } }
+      };
+
+      // 1. Daily Revenue Line Chart
+      const elRev = document.getElementById(cRevenue);
+      if (elRev) new Chart(elRev, {
+        type: "line",
+        data: {
+          labels: Array.from({length:daysInMonth},(_,i)=>i+1),
+          datasets: [{
+            data: dailyRevenue,
+            borderColor: "#8b4513",
+            backgroundColor: "rgba(139,69,19,0.08)",
+            fill: true,
+            tension: 0.4,
+            pointRadius: dailyRevenue.map(v=>v>0?3:0),
+            pointBackgroundColor: "#8b4513"
+          }]
+        },
+        options: { ...defaults, scales: {
+          x: { grid:{display:false}, ticks:{font:{size:10}, maxTicksLimit:10} },
+          y: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, callback:v=>"₹"+v.toLocaleString("en-IN")} }
+        }, plugins: { legend:{display:false}, tooltip:{ callbacks:{ label: ctx=>"₹"+ctx.raw.toLocaleString("en-IN") } } } }
+      });
+
+      // 2. Peak Hours Bar Chart
+      const elHrs = document.getElementById(cHours);
+      if (elHrs) new Chart(elHrs, {
+        type: "bar",
+        data: {
+          labels: Array.from({length:24},(_,h)=> h===0?"12am": h<12?h+"am": h===12?"12pm":(h-12)+"pm"),
+          datasets: [{
+            data: hourMap,
+            backgroundColor: hourMap.map((_,h)=> h===peakHour ? "#8b4513" : "rgba(139,69,19,0.2)"),
+            borderRadius: 4
+          }]
+        },
+        options: { ...defaults, scales: {
+          x: { grid:{display:false}, ticks:{font:{size:9}, maxRotation:45} },
+          y: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, stepSize:1} }
+        }, plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:ctx=>ctx.raw+" orders" } } } }
+      });
+
+      // 3. Day of Week Bar Chart
+      const elDays = document.getElementById(cDays);
+      if (elDays) new Chart(elDays, {
+        type: "bar",
+        data: {
+          labels: dayNames,
+          datasets: [{
+            data: dayMap,
+            backgroundColor: dayMap.map((_,i)=> i===dayMap.indexOf(Math.max(...dayMap)) ? "#8b4513" : "rgba(139,69,19,0.2)"),
+            borderRadius: 4
+          }]
+        },
+        options: { ...defaults, scales: {
+          x: { grid:{display:false}, ticks:{font:{size:11}} },
+          y: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, stepSize:1} }
+        }, plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:ctx=>ctx.raw+" orders" } } } }
+      });
+
+      // 4. Payment Doughnut
+      const elPay = document.getElementById(cPayment);
+      if (elPay && (upiRevenue||cashRevenue)) new Chart(elPay, {
+        type: "doughnut",
+        data: {
+          labels: ["UPI","Cash"],
+          datasets: [{
+            data: [upiRevenue, cashRevenue],
+            backgroundColor: ["#1a73e8","#c4a96a"],
+            borderWidth: 2,
+            borderColor: "#fff"
+          }]
+        },
+        options: { ...defaults, cutout:"68%",
+          plugins: { legend:{display:true, position:"bottom", labels:{font:{size:12}}},
+            tooltip:{ callbacks:{ label:ctx=>"₹"+ctx.raw.toLocaleString("en-IN") } } } }
+      });
+
+      // 5. Top Items Horizontal Bar
+      const elItm = document.getElementById(cItems);
+      if (elItm && topItems.length) new Chart(elItm, {
+        type: "bar",
+        data: {
+          labels: topItems.map(([n])=>n),
+          datasets: [{
+            data: topItems.map(([,q])=>q),
+            backgroundColor: ["#2e7d32","#388e3c","#558b2f","#8b4513","#a0522d","#c4a96a","#9ca3af","#6b7280"],
+            borderRadius: 4
+          }]
+        },
+        options: { ...defaults, indexAxis:"y",
+          scales: {
+            x: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, stepSize:1} },
+            y: { grid:{display:false}, ticks:{font:{size:11}} }
+          },
+          plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:ctx=>ctx.raw+" sold" } } } }
+      });
+
+      // 6. Star Rating Doughnut
+      const elFb = document.getElementById(cFeedback);
+      if (elFb && feedbacks.length) new Chart(elFb, {
+        type: "doughnut",
+        data: {
+          labels: ["5★","4★","3★","2★","1★"],
+          datasets: [{
+            data: starDist.map(s=>s.count),
+            backgroundColor: ["#2e7d32","#66bb6a","#c4a96a","#ef6c00","#c93333"],
+            borderWidth: 2,
+            borderColor: "#fff"
+          }]
+        },
+        options: { ...defaults, cutout:"60%",
+          plugins: { legend:{display:true, position:"bottom", labels:{font:{size:11}}},
+            tooltip:{ callbacks:{ label:ctx=>ctx.label+" · "+ctx.raw+" reviews" } } } }
+      });
+
+    }, 80);
+
+    return `
+      <section class="card">
+        <div class="section-head">
+          <div><h2>📊 Analytics</h2><p>Business insights for ${monthLabel}</p></div>
+          <select onchange="window._analyticsMonth=Number(this.value.split('-')[1]);window._analyticsYear=Number(this.value.split('-')[0]);document.querySelector('[data-action=owner-tab][data-tab=analytics]').click()"
+            style="padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:13px;background:var(--card,#fff)">
+            ${monthsWithOrders.map(m => {
+              const lbl = new Date(m.year,m.month,1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
+              const val = m.year+"-"+m.month;
+              return `<option value="${val}" ${m.month===selMonth&&m.year===selYear?"selected":""}>${lbl}</option>`;
+            }).join("")}
+          </select>
+        </div>
+
+        ${!orders.length ? `<div class="empty">No orders found for ${monthLabel}</div>` : `
+
+        <!-- KPIs -->
+        <div class="grid-4" style="margin-bottom:18px">
+          ${stat("Total Orders", orders.length)}
+          ${stat("Revenue", money(totalRevenue))}
+          ${stat("Avg Order", money(avgOrderVal))}
+          ${stat("Avg Rating", avgRating ? "⭐ "+avgRating.toFixed(1)+" / 5" : "—")}
+        </div>
+
+        <!-- Daily Revenue Line -->
+        <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px;margin-bottom:14px">
+          <p style="margin:0 0 12px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">📈 Daily Revenue — ${monthLabel}</p>
+          <div style="position:relative;height:160px"><canvas id="${cRevenue}"></canvas></div>
+        </div>
+
+        <!-- Peak Hours + Day of Week -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">🕐 Peak Hours</p>
+            <p style="margin:0 0 10px;font-size:12px;color:var(--muted,#6b7280)">Busiest: <strong>${peakHour}:00–${peakHour+1}:00</strong></p>
+            <div style="position:relative;height:140px"><canvas id="${cHours}"></canvas></div>
+          </div>
+          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">📅 Orders by Day</p>
+            <p style="margin:0 0 10px;font-size:12px;color:var(--muted,#6b7280)">Busiest: <strong>${busiestDay}</strong></p>
+            <div style="position:relative;height:140px"><canvas id="${cDays}"></canvas></div>
+          </div>
+        </div>
+
+        <!-- Payment Split + Feedback Rating -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">💳 Payment Split</p>
+            <p style="margin:0 0 10px;font-size:12px;color:var(--muted,#6b7280)">UPI ${money(upiRevenue)} · Cash ${money(cashRevenue)}</p>
+            <div style="position:relative;height:180px">
+              ${upiRevenue||cashRevenue ? `<canvas id="${cPayment}"></canvas>` : `<p class="muted small" style="padding-top:40px;text-align:center">No paid orders</p>`}
+            </div>
+          </div>
+          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">⭐ Feedback Ratings</p>
+            <p style="margin:0 0 10px;font-size:12px;color:var(--muted,#6b7280)">${feedbacks.length} reviews · Avg ${avgRating?avgRating.toFixed(1):"—"}</p>
+            <div style="position:relative;height:180px">
+              ${feedbacks.length ? `<canvas id="${cFeedback}"></canvas>` : `<p class="muted small" style="padding-top:40px;text-align:center">No feedback yet</p>`}
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Items Horizontal Bar -->
+        <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px;margin-bottom:14px">
+          <p style="margin:0 0 12px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">🍽 Top Ordered Items</p>
+          <div style="position:relative;height:${Math.max(topItems.length*36,100)}px">
+            ${topItems.length ? `<canvas id="${cItems}"></canvas>` : `<p class="muted small">No items data</p>`}
+          </div>
+        </div>
+
+        <!-- Busiest Tables + Order Health -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
+            <p style="margin:0 0 10px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">🪑 Busiest Tables</p>
+            ${topTables.length ? topTables.map(([tbl,count],i)=>`
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,#e5e7eb)">
+                <span style="font-size:13px">${i===0?"🥇":i===1?"🥈":i===2?"🥉":"  "} Table ${tbl}</span>
+                <strong style="font-size:13px">${count} orders</strong>
+              </div>`).join("") : `<p class="muted small">No data</p>`}
+            <p style="margin:10px 0 0;font-size:12px;color:var(--muted,#6b7280)">🔁 ${repeatTables} tables ordered more than once</p>
+          </div>
+          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
+            <p style="margin:0 0 10px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">📦 Order Health</p>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              ${[
+                ["Placed", orders.length, "#8b4513"],
+                ["Completed", paidOrders.length, "#2e7d32"],
+                ["Still Open", orders.filter(o=>o.status!=="completed").length, "#c4a96a"]
+              ].map(([label,val,color])=>`
+                <div>
+                  <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>${label}</span><strong>${val}</strong></div>
+                  <div style="background:var(--line,#e5e7eb);border-radius:4px;height:8px;overflow:hidden">
+                    <div style="width:${orders.length?Math.round(val/orders.length*100):0}%;height:100%;background:${color};border-radius:4px"></div>
+                  </div>
+                </div>`).join("")}
+              <p style="margin:4px 0 0;font-size:13px">Completion rate: <strong>${orders.length?Math.round(paidOrders.length/orders.length*100):0}%</strong></p>
+            </div>
+          </div>
+        </div>
+
+        `}
+      </section>`;
   }
 
   function settingsPanel(r) {
@@ -1066,24 +1477,44 @@
     return `<tr><td style="text-align:left">${esc(name)}</td><td style="text-align:center">${qty}</td><td style="text-align:right">${money(price * qty)}</td></tr>`;
   }
 
-  function buildReceiptHTML(r, o) {
-    const rows = (o.items || []).map(i => receiptRow(i.name, i.qty, i.price)).join("")
-      + (o.addons || []).map(a => receiptRow("+ " + a.name, a.qty || 1, a.price)).join("");
-    const payLabel = o.paymentStatus === "paid" ? "UPI"
-      : (o.paymentStatus === "cash_accepted" || o.paymentStatus === "cash_sent") ? "Cash"
+  function buildReceiptHTML(r, orders) {
+    // Merge all items across orders
+    const mergedItems = [];
+    orders.forEach(o => {
+      (o.items || []).forEach(i => {
+        const existing = mergedItems.find(x => x.id === i.id);
+        if (existing) existing.qty += i.qty;
+        else mergedItems.push({ ...i });
+      });
+      (o.addons || []).forEach(a => {
+        const existing = mergedItems.find(x => x.name === a.name && x._isAddon);
+        if (existing) existing.qty += (a.qty || 1);
+        else mergedItems.push({ id: "addon_" + a.id, name: a.name, price: a.price, qty: a.qty || 1, _isAddon: true });
+      });
+    });
+    const grandTotal = orders.reduce((s, o) => s + o.total, 0);
+    const o = orders[0]; // use first order for table/meta info
+    const upiOrders = orders.filter(o => o.paymentStatus === "paid");
+    const cashOrders = orders.filter(o => o.paymentStatus === "cash_accepted" || o.paymentStatus === "cash_sent");
+    const payLabel = upiOrders.length && cashOrders.length
+      ? `UPI \u20b9${upiOrders.reduce((s,o)=>s+o.total,0).toLocaleString("en-IN")} + Cash \u20b9${cashOrders.reduce((s,o)=>s+o.total,0).toLocaleString("en-IN")}`
+      : upiOrders.length ? "UPI"
+      : cashOrders.length ? "Cash"
       : "Pending";
+    const rows = mergedItems.map(i => receiptRow(i._isAddon ? "+ " + i.name : i.name, i.qty, i.price)).join("");
     return `<div class="receipt">
       <h2>${esc(r.name)}</h2>
       ${r.city ? `<p>${esc(r.city)}</p>` : ""}
-      <p>Table ${esc(String(o.table))} &middot; #${o.id.slice(-5).toUpperCase()}</p>
+      <p>Table ${esc(String(o.table))}</p>
       <p>${new Date(o.createdAt).toLocaleString("en-IN")}</p>
+      ${orders.length > 1 ? `<p style="font-size:11px">${orders.length} orders combined</p>` : `<p>#${o.id.slice(-5).toUpperCase()}</p>`}
       <hr>
       <table>
         <thead><tr><th style="text-align:left">Item</th><th>Qty</th><th style="text-align:right">Amt</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <hr>
-      <p class="receipt-total"><span>Total</span><span>${money(o.total)}</span></p>
+      <p class="receipt-total"><span>Total</span><span>${money(grandTotal)}</span></p>
       <p>Payment: ${payLabel}</p>
       ${o.note ? `<p>Note: ${esc(o.note)}</p>` : ""}
       <p style="margin-top:10px">Thank you for visiting!</p>
@@ -1101,7 +1532,24 @@
       holder.id = "print-receipt-holder";
       document.body.appendChild(holder);
     }
-    holder.innerHTML = buildReceiptHTML(r, o);
+    holder.innerHTML = buildReceiptHTML(r, [o]);
+    document.body.classList.add("printing-receipt");
+    setTimeout(() => window.print(), 50);
+    setTimeout(() => document.body.classList.remove("printing-receipt"), 3000);
+  }
+
+  function printTableBill(orderIds) {
+    const orders = orderIds.map(id => state.orders.find(x => x.id === id)).filter(Boolean);
+    if (!orders.length) return toast("Orders not found");
+    const r = bySlug(orders[0].restaurantSlug);
+    if (!r) return toast("Restaurant not found");
+    let holder = document.getElementById("print-receipt-holder");
+    if (!holder) {
+      holder = document.createElement("div");
+      holder.id = "print-receipt-holder";
+      document.body.appendChild(holder);
+    }
+    holder.innerHTML = buildReceiptHTML(r, orders);
     document.body.classList.add("printing-receipt");
     setTimeout(() => window.print(), 50);
     setTimeout(() => document.body.classList.remove("printing-receipt"), 3000);
@@ -1191,9 +1639,15 @@
     if (action === "set-star") return setStar(el);
     if (action === "submit-feedback") return submitFeedback(el);
     if (action === "mark-paid") return updateOrder(el.dataset.id, o => { o.paymentStatus = "paid"; o.status = "pending"; });
-    if (action === "advance-order") return updateOrder(el.dataset.id, o => o.status = el.dataset.next);
+    if (action === "mark-paid-table") return el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { o.paymentStatus = "paid"; o.status = "pending"; }));
+    if (action === "accept-cash") return updateOrder(el.dataset.id, o => { o.paymentStatus = "cash_sent"; o.status = "pending"; });
+    if (action === "accept-cash-table") return el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { if (o.paymentStatus === "cash_pending") { o.paymentStatus = "cash_sent"; o.status = "pending"; } }));
+    if (action === "cash-received-table") return el.dataset.ids.split(",").forEach(id => updateOrder(id, o => { if (o.paymentStatus === "cash_sent") o.paymentStatus = "cash_accepted"; }));
     if (action === "close-order") return updateOrder(el.dataset.id, o => o.status = "completed");
+    if (action === "close-table") return el.dataset.ids.split(",").forEach(id => updateOrder(id, o => o.status = "completed"));
     if (action === "reprint-bill") return printReceipt(el.dataset.id);
+    if (action === "print-table-bill") return printTableBill(el.dataset.ids.split(","));
+    if (action === "advance-order") return updateOrder(el.dataset.id, o => o.status = el.dataset.next);
     if (action === "toggle-sound") {
       soundEnabled = !soundEnabled;
       localStorage.setItem("restoqr_sound_off", soundEnabled ? "no" : "yes");
@@ -1297,23 +1751,54 @@
     const pickedAddons = Object.entries(selectedAddons)
       .map(([id, qty]) => { const a = find(r.addons, id); return a ? { id: a.id, name: a.name, price: a.price, qty } : null; })
       .filter(Boolean);
-    const items = Object.entries(cart).map(([id, qty]) => {
+    const newItems = Object.entries(cart).map(([id, qty]) => {
       const m = find(r.menu, id);
       return { id, name: m.name, price: m.price, qty };
     });
-    const total = items.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
-    if (!items.length && !pickedAddons.length) return toast("Cart is empty");
-    const orderId = uid();
-    mutate(s => s.orders.push({
-      id: orderId, restaurantSlug: slug, table, items,
-      addons: pickedAddons,
-      note: val("order-note"), total, paymentStatus: "waiting", status: "payment_check", createdAt: Date.now()
-    }));
-    localStorage.setItem("restoqr_last_order_" + slug, orderId);
+    if (!newItems.length && !pickedAddons.length) return toast("Cart is empty");
+
+    // Merge into existing open order for this table if one exists
+    const existingOrder = state.orders.find(o =>
+      o.restaurantSlug === slug &&
+      o.table === table &&
+      o.status !== "completed" &&
+      o.status !== "delivered"
+    );
+
+    if (existingOrder) {
+      mutate(s => {
+        const o = s.orders.find(x => x.id === existingOrder.id);
+        newItems.forEach(ni => {
+          const existing = o.items.find(i => i.id === ni.id);
+          if (existing) existing.qty += ni.qty;
+          else o.items.push(ni);
+        });
+        pickedAddons.forEach(na => {
+          const existing = (o.addons || []).find(a => a.id === na.id);
+          if (existing) existing.qty += na.qty;
+          else { o.addons = o.addons || []; o.addons.push(na); }
+        });
+        o.total = o.items.reduce((s, i) => s + i.price * i.qty, 0) +
+                  (o.addons || []).reduce((s, a) => s + a.price * (a.qty || 1), 0);
+        o.paymentStatus = "waiting";
+      });
+      localStorage.setItem("restoqr_last_order_" + slug, existingOrder.id);
+      toast("Items added to your order! Waiting for payment verification.");
+    } else {
+      const total = newItems.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
+      const orderId = uid();
+      mutate(s => s.orders.push({
+        id: orderId, restaurantSlug: slug, table, items: newItems,
+        addons: pickedAddons,
+        note: val("order-note"), total, paymentStatus: "waiting", status: "payment_check", createdAt: Date.now()
+      }));
+      localStorage.setItem("restoqr_last_order_" + slug, orderId);
+      toast("Order placed! Waiting for payment verification.");
+    }
+
     cart = {};
     selectedAddons = {};
     customerCat = "";
-    toast("Order placed! Waiting for payment verification.");
     render();
   }
 
@@ -1328,23 +1813,54 @@
     const pickedAddons = Object.entries(selectedAddons)
       .map(([id, qty]) => { const a = find(r.addons, id); return a ? { id: a.id, name: a.name, price: a.price, qty } : null; })
       .filter(Boolean);
-    const items = Object.entries(cart).map(([id, qty]) => {
+    const newItems = Object.entries(cart).map(([id, qty]) => {
       const m = find(r.menu, id);
       return { id, name: m.name, price: m.price, qty };
     });
-    const total = items.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
-    if (!items.length && !pickedAddons.length) return toast("Cart is empty");
-    const orderId = uid();
-    mutate(s => s.orders.push({
-      id: orderId, restaurantSlug: slug, table, items,
-      addons: pickedAddons,
-      note: val("order-note"), total, paymentStatus: "cash_pending", status: "payment_check", createdAt: Date.now()
-    }));
-    localStorage.setItem("restoqr_last_order_" + slug, orderId);
+    if (!newItems.length && !pickedAddons.length) return toast("Cart is empty");
+
+    // Merge into existing open order for this table if one exists
+    const existingOrder = state.orders.find(o =>
+      o.restaurantSlug === slug &&
+      o.table === table &&
+      o.status !== "completed" &&
+      o.status !== "delivered"
+    );
+
+    if (existingOrder) {
+      mutate(s => {
+        const o = s.orders.find(x => x.id === existingOrder.id);
+        newItems.forEach(ni => {
+          const existing = o.items.find(i => i.id === ni.id);
+          if (existing) existing.qty += ni.qty;
+          else o.items.push(ni);
+        });
+        pickedAddons.forEach(na => {
+          const existing = (o.addons || []).find(a => a.id === na.id);
+          if (existing) existing.qty += na.qty;
+          else { o.addons = o.addons || []; o.addons.push(na); }
+        });
+        o.total = o.items.reduce((s, i) => s + i.price * i.qty, 0) +
+                  (o.addons || []).reduce((s, a) => s + a.price * (a.qty || 1), 0);
+        o.paymentStatus = "cash_pending";
+      });
+      localStorage.setItem("restoqr_last_order_" + slug, existingOrder.id);
+      toast("Items added to your order! Counter will accept your payment.");
+    } else {
+      const total = newItems.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
+      const orderId = uid();
+      mutate(s => s.orders.push({
+        id: orderId, restaurantSlug: slug, table, items: newItems,
+        addons: pickedAddons,
+        note: val("order-note"), total, paymentStatus: "cash_pending", status: "payment_check", createdAt: Date.now()
+      }));
+      localStorage.setItem("restoqr_last_order_" + slug, orderId);
+      toast("Cash order placed! Counter will accept your payment.");
+    }
+
     cart = {};
     selectedAddons = {};
     customerCat = "";
-    toast("Cash order placed! Counter will accept your payment.");
     render();
   }
 

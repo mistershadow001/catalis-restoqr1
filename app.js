@@ -460,10 +460,14 @@
           <div class="carousel-container">
             <div class="carousel-track">
               <div class="carousel-slide active" id="video-slide">
-                <video autoplay playsinline id="carousel-video">
-                  <source src="assets/intro.mp4" type="video/mp4">
-                </video>
-                <button id="carousel-mute-btn" aria-label="Toggle mute" title="Toggle mute">🔊</button>
+                <iframe
+                  src="https://www.youtube.com/embed/wKurYY4WfNc?autoplay=1&mute=1&rel=0"
+                  width="560"
+                  height="360"
+                  frameborder="0"
+                  allow="autoplay; encrypted-media"
+                  allowfullscreen>
+                </iframe>
               </div>
               
               <div class="carousel-slide">
@@ -3468,84 +3472,70 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (tag === "textarea") return `<div class="field"><label>${label}</label><textarea id="${id}" placeholder="${placeholder || ""}">${value}</textarea></div>`;
     return `<div class="field"><label>${label}</label><input id="${id}" type="${type || "text"}" placeholder="${placeholder || ""}" value="${esc(value)}"></div>`;
   }
-  function initCarousel() {
-    const slides = document.querySelectorAll(".carousel-slide");
-    const dotsWrap = document.querySelector(".carousel-dots");
-    if (!slides.length) return;
+ function initCarousel() {
+  const slides = document.querySelectorAll(".carousel-slide");
+  const dotsWrap = document.querySelector(".carousel-dots");
 
-    let current = 0;
-    let autoTimer = null;
+  if (!slides.length || !dotsWrap) return;
 
-    // Build dots
-    slides.forEach((_, i) => {
-      const dot = document.createElement("button");
-      if (i === 0) dot.classList.add("active");
-      dot.addEventListener("click", () => showSlide(i));
-      dotsWrap.appendChild(dot);
-    });
-    const dots = dotsWrap.querySelectorAll("button");
+  let current = 0;
+  let autoTimer = null;
 
-    // Mute button wiring
-    const muteBtn = document.getElementById("carousel-mute-btn");
-    const video   = document.getElementById("carousel-video");
-    if (muteBtn && video) {
-      muteBtn.addEventListener("click", () => {
-        video.muted = !video.muted;
-        muteBtn.textContent = video.muted ? "🔇" : "🔊";
-      });
-    }
+  // Build dots
+  slides.forEach((_, i) => {
+    const dot = document.createElement("button");
+    if (i === 0) dot.classList.add("active");
 
-    function showSlide(index) {
-      const outVideo = slides[current].querySelector("video");
-      if (outVideo) { outVideo.pause(); outVideo.currentTime = 0; }
-
-      slides[current].classList.remove("active");
-      dots[current].classList.remove("active");
-      current = (index + slides.length) % slides.length;
-      slides[current].classList.add("active");
-      dots[current].classList.add("active");
-
-      const inVideo = slides[current].querySelector("video");
-      if (inVideo) {
-        stopAuto();
-        inVideo.currentTime = 0;
-        inVideo.muted = video ? video.muted : false;
-        if (muteBtn) muteBtn.textContent = inVideo.muted ? "🔇" : "🔊";
-        inVideo.play().catch(() => { inVideo.muted = true; if (muteBtn) muteBtn.textContent = "🔇"; inVideo.play(); });
-        inVideo.onended = () => { inVideo.onended = null; showSlide(current + 1); };
-      } else {
-        startAuto();
-      }
-    }
-
-    function startAuto() {
-      stopAuto();
-      autoTimer = setInterval(() => showSlide(current + 1), 5000);
-    }
-    function stopAuto() {
-      if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
-    }
-
-    document.querySelector(".carousel-btn.next")?.addEventListener("click", () => {
-      const v = slides[current].querySelector("video");
-      if (v) { v.onended = null; v.pause(); }
-      showSlide(current + 1);
-    });
-    document.querySelector(".carousel-btn.prev")?.addEventListener("click", () => {
-      const v = slides[current].querySelector("video");
-      if (v) { v.onended = null; v.pause(); }
-      showSlide(current - 1);
+    dot.addEventListener("click", () => {
+      showSlide(i);
     });
 
-    // Kick off with video slide (index 0)
-    if (video) {
-      video.muted = false;
-      video.play().catch(() => { video.muted = true; if (muteBtn) muteBtn.textContent = "🔇"; video.play(); });
-      video.onended = () => { video.onended = null; showSlide(1); };
-    } else {
-      startAuto();
+    dotsWrap.appendChild(dot);
+  });
+
+  const dots = dotsWrap.querySelectorAll("button");
+
+  function stopAuto() {
+    if (autoTimer) {
+      clearInterval(autoTimer);
+      autoTimer = null;
     }
   }
+
+  function startAuto() {
+    stopAuto();
+
+    autoTimer = setInterval(() => {
+      showSlide(current + 1);
+    }, 5000);
+  }
+
+  function showSlide(index) {
+    slides[current].classList.remove("active");
+    dots[current].classList.remove("active");
+
+    current = (index + slides.length) % slides.length;
+
+    slides[current].classList.add("active");
+    dots[current].classList.add("active");
+
+    stopAuto();
+
+    // Don't auto-slide while YouTube video slide is active
+   
+  }
+
+  document.querySelector(".carousel-btn.next")?.addEventListener("click", () => {
+    showSlide(current + 1);
+  });
+
+  document.querySelector(".carousel-btn.prev")?.addEventListener("click", () => {
+    showSlide(current - 1);
+  });
+
+  // Start on video slide
+  showSlide(0);
+}
 
   function initGuideStrip() {
     const wrap    = document.querySelector(".guide-track-wrap");

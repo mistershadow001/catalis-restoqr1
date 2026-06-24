@@ -292,7 +292,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
   padding: 24px 20px 20px;
   text-align: center;
   border: 1px solid rgba(255,200,100,0.15);
-  height: 90%;
+  height: 100%;
   
 }
 .qr-box .small { color: rgba(255,200,100,0.6); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 14px; }

@@ -27,11 +27,11 @@
   let staffAlertsInitialized = false;
 
   // Staff master key generation (same algorithm as displayed in Settings)
-  function generateMasterKey(slug) {
-    const raw = slug + "_staff_2024";
-    let h = 0;
-    for (let i = 0; i < raw.length; i++) h = (Math.imul(31, h) + raw.charCodeAt(i)) | 0;
-    return "STF-" + Math.abs(h).toString(16).toUpperCase().padStart(6, "0");
+  function generateMasterKey() {
+    const bytes = crypto.getRandomValues(new Uint8Array(18));
+    return "STF-" + Array.from(bytes)
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join("").toUpperCase().slice(0, 24);
   }
 
   function staffKeyFor(slug) { return "restoqr_staff_" + slug; }
@@ -174,11 +174,6 @@
         }
         render();
       });
-    } else {
-      try { state = JSON.parse(localStorage.getItem(KEY)) || state; } catch {}
-      state = normalizeState(state);
-      checkNewOrders(state);
-      render();
     }
     window.addEventListener("hashchange", () => {
       customerCat = "";
@@ -281,8 +276,6 @@
       db.child("restaurants").set(state.restaurants || []);
       db.child("orders").set(state.orders || []);
       db.child("feedbacks").set(state.feedbacks || []);
-    } else {
-      localStorage.setItem(KEY, JSON.stringify(state));
     }
     render();
   }
@@ -305,7 +298,7 @@
     const r = route();
     if (r.path !== "/owner") return null;
     const slug = r.params.get("resto") || localStorage.getItem("restoqr_owner_slug") || "";
-    if (slug && localStorage.getItem("restoqr_owner_" + slug) === "yes") return slug;
+    if (slug && currentUser) return slug;
     return null;
   }
 
@@ -651,22 +644,6 @@
       : "Sign in with the email linked to your restaurant.";
     const icon    = isAdmin ? "🔐" : "🏪";
 
-    // Demo-mode fallback (no Firebase)
-    if (!firebaseMode) {
-      const pinLabel = isAdmin ? "Admin Passcode" : "Owner PIN";
-      const action   = isAdmin ? "admin-login" : "owner-login";
-      const inputId  = isAdmin ? "admin-pin" : "owner-pin";
-      return `
-        ${topbar(role)}
-        <main class="wrap">
-          <section class="card" style="max-width:420px">
-            <div class="section-head"><div><h2>${icon} ${title}</h2><p>${hint}</p></div></div>
-            ${field(pinLabel, inputId, "input", "Enter passcode", "password")}
-            <button class="btn primary block" data-action="${action}">${isAdmin ? "Unlock Admin" : "Open Panel"}</button>
-          </section>
-        </main>`;
-    }
-
     return `
       ${topbar(role)}
       <main class="wrap">
@@ -692,9 +669,6 @@
       if (!currentUser) return authLoginView("admin");
       if (_adminCheckInFlight) return `${topbar("admin")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Verifying admin access…</p></div></main>`;
       if (!isAdmin(currentUser)) return authLoginView("admin", "This account does not have admin access.");
-    } else {
-      // Fallback: local PIN for demo mode
-      if (localStorage.getItem("restoqr_admin_unlocked") !== "yes") return authLoginView("admin");
     }
     const totalOrders = state.orders.length;
     const revenue = state.orders.filter(o => o.paymentStatus === "paid").reduce((s, o) => s + o.total, 0);
@@ -781,24 +755,13 @@
         location.replace("#/owner?resto=" + linkedSlug);
         return "";
       }
-    } else {
-      const unlocked = localStorage.getItem("restoqr_owner_" + r.slug) === "yes";
-      if (!unlocked) {
-        return shell("Owner Login", `
-          <section class="card" style="max-width:440px">
-            <div class="section-head"><div><h2>${esc(r.name)}</h2><p>Enter the owner PIN shared during registration.</p></div></div>
-            ${selectRestaurant(r.slug)}
-            ${field("Owner PIN", "owner-pin", "input", "Enter PIN", "password")}
-            <button class="btn primary block" data-action="owner-login" data-slug="${r.slug}">Open Restaurant Panel</button>
-          </section>`, "owner");
-      }
     }
-    const signOutBtn = firebaseMode ? `<button class="btn" style="margin-left:auto" data-action="auth-signout">Sign Out</button>` : `<button class="btn" data-action="owner-logout" data-slug="${r.slug}">Logout</button>`;
+    const signOutBtn = `<button class="btn" style="margin-left:auto" data-action="auth-signout">Sign Out</button>`;
     return `
       ${topbar("owner", r)}
       <main class="wrap">
         <div class="tabs" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-          ${["overview", "menu", "addons", "tables", "kitchen", "billing", "feedback", "analytics", "settings"].map(t => `<button class="tab-btn ${ownerTab === t ? "active" : ""}" data-action="owner-tab" data-tab="${t}">${title(t)}</button>`).join("")}
+          ${["overview", "menu", "addons", "tables", "kitchen", "billing", "feedback", "analytics", "settings", "ai"].map(t => `<button class="tab-btn ${ownerTab === t ? "active" : ""}" data-action="owner-tab" data-tab="${t}">${t === "ai" ? "🤖 RestoAI" : title(t)}</button>`).join("")}
           ${signOutBtn}
         </div>
         ${ownerContent(r)}
@@ -813,7 +776,7 @@
     if (ownerTab === "billing") return billingPanel(r);
     if (ownerTab === "feedback") return feedbackPanel(r);
     if (ownerTab === "settings") return settingsPanel(r);
-    if (ownerTab === "analytics") return analyticsPanel(r);
+    if (ownerTab === "ai") return restoAiPanel(r);
     const open = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
     return `
       <div class="grid-4">
@@ -2256,9 +2219,9 @@
         </div>
         ${firebaseMode ? `
           <div class="field">
-            <label>Owner Login Email <span class="muted">(Firebase Auth — used to access this panel)</span></label>
+            <label>Owner Login Email <span class="muted"></span></label>
             <input id="set-owner-email" type="email" placeholder="owner@email.com" value="${esc(r.ownerEmail || "")}">
-            <p class="muted small" style="margin:4px 0 0">Create this account in Firebase Console → Authentication → Users, then paste the email here and save.</p>
+           
           </div>` : ""}
         <button class="btn primary" data-action="save-settings" data-slug="${r.slug}">Save Settings</button>
         ${firebaseMode
@@ -2275,10 +2238,18 @@
         </div>
         <div class="field">
           <label>${r.masterKeyHash ? "Change Master Key" : "Set Master Key"}</label>
-          <input id="set-master-key" type="password" placeholder="${r.masterKeyHash ? "Enter new key to change it" : "Choose a strong key e.g. Kitchen@2024"}" autocomplete="new-password">
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="set-master-key" type="text" placeholder="${r.masterKeyHash ? "Enter new key to change it" : "Click Generate or type your own"}" autocomplete="new-password" style="flex:1">
+            <button type="button" class="btn blue" onclick="(function(){
+              const bytes = crypto.getRandomValues(new Uint8Array(18));
+              const key = 'STF-' + Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join('').toUpperCase().slice(0,24);
+              const input = document.getElementById('set-master-key');
+              if(input){ input.value = key; input.type = 'text'; }
+            })()">Generate</button>
+          </div>
           <p class="muted small" style="margin:6px 0 0">
             ${r.masterKeyHash
-              ? `✅ A master key is already set. Leave blank to keep the existing key, or type a new one to replace it.`
+              ? `✅ A master key is already set. Leave blank to keep the existing key, or generate/type a new one to replace it.`
               : `⚠ No master key set yet. Set one before sharing the staff dashboard link.`}
           </p>
           <p class="muted small" style="margin:4px 0 0">The key is stored as a one-way hash — even you cannot read it back. Anyone with it can access Kitchen, Floor Plan, and Billing panels.</p>
@@ -2287,7 +2258,183 @@
           <button class="btn primary" data-action="save-settings" data-slug="${r.slug}">Save Key</button>
           <a href="#/staff?resto=${r.slug}" class="btn">🛎 Open Staff Dashboard</a>
         </div>
+      </section>
+
+      <section class="card" style="max-width:640px;margin-top:14px;border:1.5px solid #f5c6c6">
+        <div class="section-head"><div><h2 style="color:#c0392b">⚠ Danger Zone</h2><p>Permanently delete all orders for ${esc(r.name)}. Menu and settings are kept.</p></div></div>
+        <p class="muted small">This will remove all orders — active, completed, and closed — from the database. This cannot be undone.</p>
+        <button class="btn bad" data-action="clear-orders" data-slug="${r.slug}">🗑 Clear All Orders</button>
       </section>`;
+  }
+
+  // ================================================================
+  // RESTOAI PANEL
+  // ================================================================
+  let _aiMessages = []; // conversation history for current session
+  let _aiLoading  = false;
+
+  function restoAiPanel(r) {
+    const orders = state.orders.filter(o => o.restaurantSlug === r.slug);
+    const hasOrders = orders.length > 0;
+
+    return `<section class="card" style="max-width:700px">
+      <div class="section-head">
+        <div><h2>🤖 RestoAI</h2><p>Ask anything about your restaurant — orders, revenue, menu, trends.</p></div>
+        ${_aiMessages.length ? `<button class="btn" data-action="ai-clear-chat" data-slug="${r.slug}" style="font-size:12px">Clear chat</button>` : ""}
+      </div>
+
+      ${!hasOrders ? `<div style="background:#fff8e1;border:1px solid #ffe082;border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#7a5c1e">⚠ No orders yet — AI will only have menu and settings context for now.</div>` : ""}
+
+      <!-- Chat history -->
+      <div id="ai-chat-box" style="min-height:120px;max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;margin-bottom:14px;padding-right:2px">
+        ${_aiMessages.length === 0 ? `
+          <div style="text-align:center;padding:32px 16px;color:#a89880">
+            <div style="font-size:36px;margin-bottom:10px">🤖</div>
+            <p style="font-weight:600;margin:0 0 6px;color:#2a1a0e">Hi! I'm RestoAI.</p>
+            <p style="font-weight:600;margin:0 0 6px;color:#2a1a0e">To start conversion with me please enter Hii.</p>
+            <p style="font-size:13px;margin:0">Ask me about your sales, best-selling items, peak hours, revenue — anything about ${esc(r.name)}.</p>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:0 8px">
+            ${[
+              "What was my revenue today?",
+              "Which item sells the most?",
+              "How many orders this week?",
+              "What's my busiest hour?",
+              "Compare UPI vs cash payments"
+            ].map(q => `<button class="btn" style="font-size:12px;padding:7px 12px" data-action="ai-quick" data-slug="${r.slug}" data-q="${esc(q)}">${esc(q)}</button>`).join("")}
+          </div>` :
+          _aiMessages.map(m => m.role === "user"
+            ? `<div style="align-self:flex-end;background:#1c0e04;color:#f5ead8;border-radius:14px 14px 4px 14px;padding:10px 14px;max-width:80%;font-size:14px;line-height:1.5">${esc(m.content)}</div>`
+            : `<div style="align-self:flex-start;background:#f5f0e8;border:1px solid #e8dcc8;border-radius:14px 14px 14px 4px;padding:10px 14px;max-width:88%;font-size:14px;line-height:1.6;color:#2a1a0e;white-space:pre-wrap">${esc(m.content)}</div>`
+          ).join("")
+        }
+        ${_aiLoading ? `<div style="align-self:flex-start;background:#f5f0e8;border:1px solid #e8dcc8;border-radius:14px;padding:10px 16px;font-size:13px;color:#a89880">
+          <span style="display:inline-flex;gap:4px;align-items:center">
+            <span style="animation:ai-dot 1.2s infinite .0s;opacity:0">●</span>
+            <span style="animation:ai-dot 1.2s infinite .2s;opacity:0">●</span>
+            <span style="animation:ai-dot 1.2s infinite .4s;opacity:0">●</span>
+          </span>
+        </div>
+        <style>@keyframes ai-dot{0%,80%,100%{opacity:0}40%{opacity:1}}</style>` : ""}
+      </div>
+
+      <!-- Input -->
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <textarea id="ai-input" placeholder="Ask about your restaurant…" rows="2"
+          style="flex:1;resize:none;border:1.5px solid #e8dcc8;border-radius:12px;padding:10px 12px;font-size:14px;font-family:inherit;background:#faf5ec"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();document.querySelector('[data-action=ai-send]').click()}"
+        ></textarea>
+        <button class="btn primary" data-action="ai-send" data-slug="${r.slug}"
+          style="padding:12px 18px;border-radius:12px;font-size:15px;align-self:stretch"
+          ${_aiLoading ? "disabled" : ""}>
+          ${_aiLoading ? "…" : "➤"}
+        </button>
+      </div>
+    </section>`;
+  }
+
+  async function sendRestoAiMessage(slug, userMsg) {
+    if (!userMsg.trim() || _aiLoading) return;
+    const r = bySlug(slug);
+    if (!r) return;
+
+    // Fetch key directly from Firebase on demand — never stored in state
+    let groqKey = "";
+    try {
+      if (firebaseMode && db) {
+        const snap = await db.child("meta/groq-api").once("value");
+        groqKey = snap.val() || "";
+      } else {
+        groqKey = state?.meta?.["groq-api"] || "";
+      }
+    } catch(e) {
+      groqKey = "";
+    }
+    if (!groqKey) return toast("Groq API key not found in Firebase (restoqr/meta/groq-api)");
+
+    // Build context snapshot for AI
+    const orders = state.orders.filter(o => o.restaurantSlug === slug);
+    const today  = new Date().toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+
+    const paidOrders = orders.filter(o => o.paymentStatus === "paid" || o.paymentStatus === "cash_accepted");
+    const todayOrders = paidOrders.filter(o => new Date(o.createdAt).toISOString().slice(0, 10) === today);
+    const yesterdayOrders = paidOrders.filter(o => new Date(o.createdAt).toISOString().slice(0, 10) === yesterday);
+
+    // Item frequency map
+    const itemFreq = {};
+    orders.forEach(o => (o.items || []).forEach(i => { itemFreq[i.name] = (itemFreq[i.name] || 0) + i.qty; }));
+    const topItems = Object.entries(itemFreq).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+    // Hour map
+    const hourMap = Array(24).fill(0);
+    orders.forEach(o => { hourMap[new Date(o.createdAt).getHours()]++; });
+    const peakHour = hourMap.indexOf(Math.max(...hourMap));
+
+    const upiTotal  = paidOrders.filter(o => o.paymentStatus === "paid").reduce((s, o) => s + o.total, 0);
+    const cashTotal = paidOrders.filter(o => o.paymentStatus === "cash_accepted").reduce((s, o) => s + o.total, 0);
+
+    const systemPrompt = `You are RestoAI, a smart restaurant analytics assistant for "${r.name}" owned by ${r.owner} in ${r.city || "India"}.
+
+Restaurant data snapshot (as of ${new Date().toLocaleString("en-IN")}):
+- Menu items: ${r.menu.length} (${r.menu.filter(i => i.available).length} available)
+- Menu: ${r.menu.map(i => `${i.name} (₹${i.price}, ${i.veg ? "veg" : "non-veg"}, ${i.available ? "available" : "hidden"})`).join(", ")}
+- Categories: ${r.categories.join(", ")}
+- Add-ons: ${(r.addons || []).map(a => `${a.name} ₹${a.price}`).join(", ") || "none"}
+- Tables: ${r.tableCount || r.tables.length}
+
+Orders summary:
+- Total orders ever: ${orders.length}
+- Paid orders: ${paidOrders.length}
+- Total UPI revenue: ₹${upiTotal.toLocaleString("en-IN")}
+- Total cash revenue: ₹${cashTotal.toLocaleString("en-IN")}
+- Grand total revenue: ₹${(upiTotal + cashTotal).toLocaleString("en-IN")}
+- Today's orders (${today}): ${todayOrders.length} orders, ₹${todayOrders.reduce((s, o) => s + o.total, 0).toLocaleString("en-IN")}
+- Yesterday's orders (${yesterday}): ${yesterdayOrders.length} orders, ₹${yesterdayOrders.reduce((s, o) => s + o.total, 0).toLocaleString("en-IN")}
+- Top 10 items by qty sold: ${topItems.map(([n, q]) => `${n} (${q})`).join(", ") || "no data"}
+- Peak hour: ${peakHour}:00–${peakHour + 1}:00
+- Average order value: ₹${paidOrders.length ? Math.round((upiTotal + cashTotal) / paidOrders.length) : 0}
+
+Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. If asked for suggestions, give practical advice for a small Indian restaurant.`;
+
+    _aiMessages.push({ role: "user", content: userMsg });
+    _aiLoading = true;
+    ownerTab = "ai";
+    render();
+
+    // Scroll chat to bottom after render
+    setTimeout(() => {
+      const box = document.getElementById("ai-chat-box");
+      if (box) box.scrollTop = box.scrollHeight;
+    }, 50);
+
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + groqKey },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          max_tokens: 512,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ..._aiMessages
+          ]
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "Groq error");
+      const reply = data.choices?.[0]?.message?.content || "Sorry, I couldn't get a response.";
+      _aiMessages.push({ role: "assistant", content: reply });
+    } catch (err) {
+      _aiMessages.push({ role: "assistant", content: "⚠ Error: " + err.message });
+    }
+
+    _aiLoading = false;
+    render();
+    setTimeout(() => {
+      const box = document.getElementById("ai-chat-box");
+      if (box) box.scrollTop = box.scrollHeight;
+    }, 50);
   }
 
   function customerView(params) {
@@ -2681,8 +2828,6 @@
     const el = e.target.closest("[data-action]");
     if (!el) return;
     const action = el.dataset.action;
-    if (action === "admin-login") return adminLogin();
-    if (action === "admin-logout") return localStorage.removeItem("restoqr_admin_unlocked"), render();
     if (action === "auth-login") return firebaseAuthLogin(el.dataset.role);
     if (action === "auth-signout") return authSignOut();
     if (action === "register") return registerRestaurant();
@@ -2693,8 +2838,6 @@
     if (action === "toggle-active") return updateRestaurant(el.dataset.slug, r => r.active = !r.active);
     if (action === "toggle-qr") return updateRestaurant(el.dataset.slug, r => r.qrEnabled = !r.qrEnabled);
     if (action === "extend-sub") return updateRestaurant(el.dataset.slug, r => { r.active = true; r.qrEnabled = true; r.subscriptionEnds = Math.max(Date.now(), r.subscriptionEnds || 0) + days(30); });
-    if (action === "owner-login") return ownerLogin(el.dataset.slug);
-    if (action === "owner-logout") return localStorage.removeItem("restoqr_owner_" + el.dataset.slug), render();
     if (action === "owner-tab") return ownerTab = el.dataset.tab, render();
     if (action === "print-qr") return window.print();
     if (action === "add-item") return addMenuItem(el.dataset.slug);
@@ -2810,6 +2953,25 @@
     }
     // ── End Staff Dashboard actions ──────────────────────────────────
 
+    if (action === "ai-send") {
+      const input = document.getElementById("ai-input");
+      const msg = (input ? input.value : "").trim();
+      if (input) input.value = "";
+      return sendRestoAiMessage(el.dataset.slug, msg);
+    }
+    if (action === "ai-quick") {
+      return sendRestoAiMessage(el.dataset.slug, el.dataset.q);
+    }
+    if (action === "ai-clear-chat") {
+      _aiMessages = [];
+      return render();
+    }
+    if (action === "clear-orders") {
+      const r = bySlug(el.dataset.slug);
+      if (!confirm(`Clear ALL orders for ${r?.name || "this restaurant"}? This cannot be undone.`)) return;
+      mutate(s => { s.orders = s.orders.filter(o => o.restaurantSlug !== el.dataset.slug); });
+      return toast("🗑 All orders cleared");
+    }
     if (action === "toggle-sound") {
       soundEnabled = !soundEnabled;
       localStorage.setItem("restoqr_sound_off", soundEnabled ? "no" : "yes");
@@ -2817,15 +2979,6 @@
       toast(soundEnabled ? "🔔 New-order alert sound is ON" : "🔕 New-order alert sound muted");
       return render();
     }
-  }
-
-  function adminLogin() {
-    // Demo / local-storage mode only
-    if (val("admin-pin") === state.meta.adminPin) {
-      localStorage.setItem("restoqr_admin_unlocked", "yes");
-      toast("Admin unlocked");
-      render();
-    } else toast("Wrong passcode");
   }
 
   function firebaseAuthLogin(role) {
@@ -2859,8 +3012,8 @@
     const password = val("reg-owner-password");
 
     if (!name || !owner || !phone || !pin) return toast("Fill restaurant, owner, phone, and PIN");
-    if (firebaseMode && (!email || !password)) return toast("Fill owner email and password");
-    if (firebaseMode && password.length < 6) return toast("Password must be at least 6 characters");
+    if (!email || !password) return toast("Fill owner email and password");
+    if (password.length < 6) return toast("Password must be at least 6 characters");
 
     const slug = slugify(name);
     if (bySlug(slug)) return toast("Restaurant name already exists");
@@ -2898,20 +3051,7 @@
           }[e.code] || ("Registration failed: " + e.message);
           toast(msg);
         });
-    } else {
-      // Demo / local mode — no Firebase Auth
-      saveRestaurant(email);
     }
-  }
-
-  function ownerLogin(slug) {
-    const r = bySlug(slug);
-    if (r && val("owner-pin") === r.ownerPin) {
-      localStorage.setItem("restoqr_owner_" + slug, "yes");
-      localStorage.setItem("restoqr_owner_slug", slug);
-      toast("Owner panel opened");
-      render();
-    } else toast("Wrong PIN");
   }
 
   function addMenuItem(slug) {
@@ -3236,15 +3376,6 @@
 
   document.addEventListener("click", bindClicks);
   document.addEventListener("click", function unlockAudioOnce() { ensureAudioCtx(); }, { once: true });
-  window.addEventListener("storage", e => {
-    if (firebaseMode || e.key !== KEY || !e.newValue) return;
-    try {
-      const normalized = normalizeState(JSON.parse(e.newValue));
-      checkNewOrders(normalized);
-      state = normalized;
-      render();
-    } catch {}
-  });
   window.addEventListener("afterprint", () => {
     document.body.classList.remove("printing-receipt");
   });

@@ -37,6 +37,12 @@
   function staffKeyFor(slug) { return "restoqr_staff_" + slug; }
   function isStaffUnlocked(slug) { return localStorage.getItem(staffKeyFor(slug)) === "yes"; }
   function staffRole(slug) { return localStorage.getItem("restoqr_staff_role_" + slug) || "waiter"; }
+
+  // Hash a master key with SHA-256 via Web Crypto — returns hex string promise
+  async function hashMasterKey(key) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key.trim()));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
   // ================================================================
 
   // ---- New Order Alert Sound ----
@@ -138,6 +144,7 @@
       // Listen for auth state — renders gated views correctly
       auth.onAuthStateChanged(user => {
         currentUser = user || null;
+        _isAdminCache = null; // reset on every auth change
         render();
       });
 
@@ -145,10 +152,26 @@
       db.on("value", snap => {
         const value = snap.val();
         if (value && value.restaurants) {
+          // Existing data — load it, preserve admins and other nodes
           const normalized = normalizeState(value);
           checkNewOrders(normalized);
           state = normalized;
-        } else save(seed());
+        } else if (!value) {
+          // Truly empty DB — seed only the app data, never touch admins node
+          const s = seed();
+          db.child("meta").set(s.meta);
+          db.child("restaurants").set(s.restaurants);
+          db.child("orders").set(s.orders);
+          db.child("feedbacks").set(s.feedbacks);
+          // Do NOT call save(seed()) — that would overwrite the entire restoqr node
+          // including any manually added admins
+        }
+        // If value exists but has no restaurants yet (e.g. only admins node),
+        // just normalize what we have without overwriting
+        else {
+          const normalized = normalizeState(value);
+          state = normalized;
+        }
         render();
       });
     } else {
@@ -179,6 +202,7 @@
   function authSignOut() {
     if (auth) auth.signOut();
     currentUser = null;
+    _isAdminCache = null;
     render();
   }
 
@@ -203,11 +227,26 @@
     return state.restaurants.find(r => (r.ownerEmail || "").toLowerCase() === email)?.slug || null;
   }
 
-  // True when the signed-in user is the designated super-admin email
+  // Cache for admin status — reset on sign out
+  let _isAdminCache = null;
+  let _adminCheckInFlight = false;
+
+  // True when the signed-in user's UID exists under restoqr/admins/<uid>
+  // Result is cached after first DB check so renders are instant after that.
   function isAdmin(user) {
-    if (!user) return false;
-    const adminEmail = (window.FIREBASE_CONFIG.adminEmail || "").toLowerCase();
-    return adminEmail && user.email.toLowerCase() === adminEmail;
+    if (!user || !db) return false;
+    if (_isAdminCache !== null) return _isAdminCache;
+    if (_adminCheckInFlight) return false;
+    _adminCheckInFlight = true;
+    db.child("admins").child(user.uid).once("value", snap => {
+      _isAdminCache = snap.exists();
+      _adminCheckInFlight = false;
+      render(); // re-render now that we know the result
+    }).catch(() => {
+      _adminCheckInFlight = false;
+      _isAdminCache = false;
+    });
+    return false; // show loading state until DB responds
   }
 
   function normalizeState(raw) {
@@ -221,6 +260,8 @@
       r.upiName = r.upiName || r.owner || r.name;
       r.upiId = r.upiId || "";
       r.couponCode = r.couponCode || "";
+      r.staffKey = r.staffKey || "";
+      r.masterKeyHash = r.masterKeyHash || "";
       r.ownerEmail = r.ownerEmail || "";
       r.tables = r.tables || [];
       r.tableCount = r.tableCount || r.tables.length || 4;
@@ -234,8 +275,15 @@
   function save(next) {
     state = clone(next || state);
     checkNewOrders(state);
-    if (firebaseMode && db) db.set(state);
-    else localStorage.setItem(KEY, JSON.stringify(state));
+    if (firebaseMode && db) {
+      // Only write app data keys — never touch the admins node
+      db.child("meta").set(state.meta || {});
+      db.child("restaurants").set(state.restaurants || []);
+      db.child("orders").set(state.orders || []);
+      db.child("feedbacks").set(state.feedbacks || []);
+    } else {
+      localStorage.setItem(KEY, JSON.stringify(state));
+    }
     render();
   }
 
@@ -384,6 +432,31 @@
     const active = state.restaurants.filter(r => r.active).length;
     const waiting = state.orders.filter(o => o.paymentStatus === "waiting").length;
     const today = state.orders.filter(o => sameDay(o.createdAt, Date.now()));
+
+    // If owner is logged in, show their panel button instead of generic login
+    let heroActions;
+    if (firebaseMode && currentUser) {
+      if (isAdmin(currentUser)) {
+        heroActions = `
+          <a class="btn primary" href="#/admin">Admin Dashboard</a>
+          <button class="btn" data-action="auth-signout">Sign Out</button>`;
+      } else {
+        const ownerSlug = ownerSlugForUser(currentUser);
+        const ownerResto = ownerSlug ? bySlug(ownerSlug) : null;
+        heroActions = ownerResto
+          ? `<a class="btn primary" href="#/owner?resto=${ownerSlug}">Go to ${esc(ownerResto.name)} Panel</a>
+             <button class="btn" data-action="auth-signout">Sign Out</button>`
+          : `<a class="btn primary" href="#/register">Register Restaurant</a>
+             <a class="btn" href="#/owner">Restaurant Login</a>
+             <button class="btn" data-action="auth-signout">Sign Out</button>`;
+      }
+    } else {
+      heroActions = `
+        <a class="btn primary" href="#/register">Register Restaurant</a>
+        <a class="btn" href="#/owner">Restaurant Login</a>
+        <a class="btn ghost" href="#/admin">Super Admin</a>`;
+    }
+
     return `
       ${topbar("home")}
       
@@ -392,9 +465,7 @@
           <section>
             
             <div class="hero-actions">
-              <a class="btn primary" href="#/register">Register Restaurant</a>
-              <a class="btn" href="#/owner">Restaurant Login</a>
-              <a class="btn ghost" href="#/admin">Super Admin</a>
+              ${heroActions}
             </div>
           </section>
         </div>
@@ -447,42 +518,84 @@
               ${field("Owner Name", "reg-owner", "input", "Owner name")}
               ${field("Phone", "reg-phone", "input", "Mobile number")}
               ${field("City", "reg-city", "input", "City")}
-              ${field("Owner Login PIN", "reg-pin", "input", "4 digit PIN", "password")}
+              ${field("Owner Email", "reg-owner-email", "input", "owner@email.com", "email")}
+              ${field("Owner Password", "reg-owner-password", "input", "Min 6 characters", "password")}
               ${field("UPI ID (VPA)", "reg-upiid", "input", "name@upi or 9999999999@paytm")}
               ${field("UPI Display Name", "reg-upi", "input", "Shown under payment QR")}
               ${field("Google Review Link", "reg-review", "input", "Paste Google review link")}
-              ${field("Coupon Code", "reg-coupon", "input", "Optional — have a code?")}
+              <input type="hidden" id="reg-coupon" value="">
+              <input type="hidden" id="reg-pin" value="0000">
             </div>
             <button class="btn primary" data-action="register">Submit Registration</button>
           </section>
           <aside class="qr-box">
             <p class="small">Pay registration / subscription</p>
-            <div class="qr-img-frame">
-              <img id="reg-placeholder-img" src="./assets/maharaj.png" alt="Make Payment"
-                style="position:absolute;inset:0;width:470px;height:300px;object-fit:cover;transition:opacity 0.45s ease,transform 0.45s ease;border-radius:12px">
-              <img id="reg-qr-img" src="${DEFAULT_QR}" alt="PhonePe QR"
-                style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;padding:10px;box-sizing:border-box;border-radius:12px;opacity:0;transform:scale(0.92);transition:opacity 0.45s ease,transform 0.45s ease;pointer-events:none">
-            </div>
-            <div id="reg-make-payment-wrap">
-              <button class="btn primary block" onclick="(function(){
-                var ph=document.getElementById('reg-placeholder-img');
-                var qr=document.getElementById('reg-qr-img');
-                var btn=document.getElementById('reg-make-payment-wrap');
-                var msg=document.getElementById('reg-payment-msg');
-                ph.style.opacity='0'; ph.style.transform='scale(1.06)';
-                setTimeout(function(){ qr.style.opacity='1'; qr.style.transform='scale(1)'; qr.style.pointerEvents='auto'; }, 250);
-                setTimeout(function(){ btn.style.display='none'; }, 400);
-                setTimeout(function(){ msg.style.display='block'; }, 500);
+            <div id="reg-payment-panel">
+
+              <div class="rqr-flip" id="reg-flip">
+                <div class="rqr-flip-inner" id="reg-flip-inner">
+                  <div class="rqr-flip-face rqr-flip-front">
+                    <img src="./assets/maharaj.png" alt="RestoQR">
+                  </div>
+                  <div class="rqr-flip-face rqr-flip-back">
+                    <img id="reg-qr-img" src="" alt="UPI QR">
+                  </div>
+                </div>
+              </div>
+
+              <div style="text-align:center;margin:12px 0 14px">
+                <span id="reg-amount-display" style="font-size:20px;font-weight:900;color:#1c0e04">₹999</span>
+                <span class="small" style="opacity:.65"> · Registration · 30 days access</span>
+                <div id="reg-coupon-badge" style="display:none;margin-top:6px">
+                  <span style="background:#d4edda;color:#155724;font-size:12px;font-weight:700;padding:4px 12px;border-radius:20px">🎟 Coupon applied — ₹300 off!</span>
+                </div>
+              </div>
+
+              <button class="btn primary block" id="reg-pay-btn" onclick="(function(){
+                var name = (document.getElementById('reg-name')||{}).value||'restaurant';
+                var coupon = ((document.getElementById('reg-coupon')||{}).value||'').trim().toUpperCase();
+                var amount = coupon === '@MARATHIMANUS' ? 699 : 999;
+                var slug = name.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,20) || 'restaurant';
+                var note = 'REG-' + slug.toUpperCase()+'-' + Date.now().toString().slice(-6);
+                var upiId = '7972736023@ybl';
+                var upiName = 'RestoQR';
+                var upiLink = 'upi://pay?pa=' + encodeURIComponent(upiId) + '&pn=' + encodeURIComponent(upiName) + '&am=' + amount + '&tn=' + encodeURIComponent(note) + '&cu=INR';
+                var qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(upiLink);
+                var qrImg = document.getElementById('reg-qr-img');
+                var flipInner = document.getElementById('reg-flip-inner');
+                var noteEl = document.getElementById('reg-upi-note');
+                var noteWrap = document.getElementById('reg-upi-note-wrap');
+                var deeplink = document.getElementById('reg-upi-deeplink');
+                var btn = document.getElementById('reg-pay-btn');
+                var msg = document.getElementById('reg-payment-msg');
+                if(qrImg) qrImg.src = qrUrl;
+                if(noteEl) noteEl.textContent = note;
+                if(deeplink) deeplink.href = upiLink;
+                if(flipInner) flipInner.classList.add('flipped');
+                if(noteWrap) noteWrap.style.display = 'block';
+                if(deeplink) deeplink.style.display = 'inline-block';
+                if(btn){ btn.disabled = true; btn.style.opacity = '0.55'; btn.textContent = '✅ QR Ready Above'; }
+                if(msg) setTimeout(function(){ msg.style.display='block'; }, 750);
               })()">💳 Make Payment</button>
               <p class="pay-upi-label">PhonePe · GPay · UPI</p>
-              <p class="small" style="opacity:0.5;margin:2px 0 0">We activate your plan after verification</p>
+              <p class="small" id="reg-upi-note-wrap" style="display:none;margin:6px 0 0">Ref: <strong id="reg-upi-note" style="color:#c4a96a;font-family:monospace"></strong></p>
+              <a id="reg-upi-deeplink" href="#" style="display:none;margin-top:8px;font-size:12px;color:#1a73e8;text-decoration:none;font-weight:600">📱 Open in UPI App</a>
+
+              <div id="reg-payment-msg" style="display:none;margin-top:12px">
+                <div class="pay-verify-badge">⏳ Verifying payment</div>
+                <p class="small">We'll verify and activate your restaurant within 2–4 hours. Our team will contact you on the phone number provided.</p>
+              </div>
             </div>
-            <div id="reg-payment-msg" style="display:none">
-              <div class="pay-verify-badge">⏳ Verifying payment</div>
-              <p class="small">It will take a few minutes to verify your payment status. Till then you can proceed with the submission.</p>
-            </div>
-            
-            
+
+            <style>
+              .rqr-flip{ width:200px;height:200px;margin:0 auto;perspective:1200px; }
+              .rqr-flip-inner{ position:relative;width:100%;height:100%;transition:transform .8s cubic-bezier(.4,.1,.2,1);transform-style:preserve-3d; }
+              .rqr-flip-inner.flipped{ transform:rotateY(180deg); }
+              .rqr-flip-face{ position:absolute;inset:0;backface-visibility:hidden;border-radius:14px;overflow:hidden;background:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(0,0,0,.18); }
+              .rqr-flip-front img{ width:100%;height:100%;object-fit:cover; }
+              .rqr-flip-back{ transform:rotateY(180deg); }
+              .rqr-flip-back img{ width:100%;height:100%;object-fit:contain;padding:10px;box-sizing:border-box; }
+            </style>
           </aside>
         </div>
       </main>
@@ -506,13 +619,22 @@
               var input=document.getElementById('coupon-modal-input');
               var code=(input.value||'').trim().toUpperCase();
               if(!code){ input.style.border='1.5px solid #c93333'; input.focus(); return; }
+              var valid = code === '@MARATHIMANUS';
+              if(!valid){ input.style.border='1.5px solid #c93333'; input.focus();
+                var t=document.getElementById('toast');
+                if(t){ t.textContent='❌ Invalid coupon code'; t.hidden=false; clearTimeout(t._ct); t._ct=setTimeout(function(){t.hidden=true;},2400); }
+                return;
+              }
               var target=document.getElementById('reg-coupon');
               if(target) target.value=code;
               document.getElementById('coupon-modal-overlay').style.display='none';
               input.value=''; input.style.border='';
               var t=document.getElementById('toast');
-              if(t){ t.textContent='🎟 Coupon '+code+' applied to your registration'; t.hidden=false; clearTimeout(t._ct); t._ct=setTimeout(function(){t.hidden=true;},2400); }
-              if(target){ target.style.transition='border-color .3s'; target.style.border='1.5px solid #2e7d32'; setTimeout(function(){target.style.border='';},1500); }
+              if(t){ t.textContent='🎟 Coupon applied — ₹300 off! You pay ₹699'; t.hidden=false; clearTimeout(t._ct); t._ct=setTimeout(function(){t.hidden=true;},3000); }
+              var amtEl=document.getElementById('reg-amount-display');
+              if(amtEl){ amtEl.textContent='₹699'; amtEl.style.color='#1e8a50'; }
+              var badge=document.getElementById('reg-coupon-badge');
+              if(badge) badge.style.display='block';
             })()">Apply Coupon</button>
         </div>
       </div>`;
@@ -568,6 +690,7 @@
     // Firebase mode: require signed-in admin email
     if (firebaseMode) {
       if (!currentUser) return authLoginView("admin");
+      if (_adminCheckInFlight) return `${topbar("admin")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Verifying admin access…</p></div></main>`;
       if (!isAdmin(currentUser)) return authLoginView("admin", "This account does not have admin access.");
     } else {
       // Fallback: local PIN for demo mode
@@ -625,8 +748,26 @@
   }
 
   function ownerView(params) {
-    const slug = params.get("resto") || localStorage.getItem("restoqr_owner_slug") || (state.restaurants[0]?.slug || "");
+    // Firebase mode: if logged in, resolve slug from their account first
+    if (firebaseMode && currentUser) {
+      const linkedSlug = ownerSlugForUser(currentUser);
+      const adminUser  = isAdmin(currentUser);
+      // If owner has a linked restaurant and no explicit slug in URL, redirect to theirs
+      if (linkedSlug && !params.get("resto")) {
+        location.replace("#/owner?resto=" + linkedSlug);
+        return "";
+      }
+      // If owner tries to access a different restaurant's slug, redirect to their own
+      if (linkedSlug && params.get("resto") && params.get("resto") !== linkedSlug && !adminUser) {
+        location.replace("#/owner?resto=" + linkedSlug);
+        return "";
+      }
+    }
+
+    const slug = params.get("resto") || (firebaseMode && currentUser ? ownerSlugForUser(currentUser) : null) || localStorage.getItem("restoqr_owner_slug") || (state.restaurants[0]?.slug || "");
     const r = bySlug(slug);
+    // Firebase mode: if not logged in, always show login form first
+    if (firebaseMode && !currentUser) return authLoginView("owner");
     if (!r) return shell("Owner Panel", `<section class="card">${empty("Restaurant not found")}<a class="btn primary" href="#/register">Register</a></section>`, "owner");
     // Firebase mode: require signed-in owner email linked to this restaurant
     if (firebaseMode) {
@@ -692,35 +833,71 @@
         </div>
       </section>
       <section class="card" style="margin-top:14px" id="owner-sub-card">
-        <div class="section-head"><div><h2>Subscription Payment</h2><p>Start or renew your RestoQR subscription. </p></div></div>
-        <div class="split" style="align-items:flex-start">
-          <div>
-            <p style="margin:0 0 10px;font-size:14px">Scan and pay on PhonePe to start or renew your subscription. After verification, we will activate your plan shortly.</p>
-            <div id="owner-make-payment-wrap">
-              <button class="btn primary" id="owner-make-payment-btn" onclick="(function(){
-                var ph=document.getElementById('owner-placeholder-img');
-                var qr=document.getElementById('owner-qr-img');
-                var btn=document.getElementById('owner-make-payment-wrap');
-                var msg=document.getElementById('owner-payment-msg');
-                if(ph){ph.style.opacity='0';ph.style.transform='scale(1.05)';}
-                if(qr){setTimeout(function(){qr.style.opacity='1';qr.style.transform='scale(1)';qr.style.pointerEvents='auto';},200);}
-                if(btn){setTimeout(function(){btn.style.display='none';},400);}
-                if(msg){setTimeout(function(){msg.style.display='block';},500);}
-              })()">💳 Make Payment</button>
+        <div class="section-head"><div><h2>Subscription Payment</h2><p>Renew your RestoQR subscription for another 30 days.</p></div></div>
+
+        <div class="rqr-flip" id="owner-flip">
+          <div class="rqr-flip-inner" id="owner-flip-inner">
+            <div class="rqr-flip-face rqr-flip-front">
+              <img src="./assets/maharaj.png" alt="RestoQR">
             </div>
-            <div id="owner-payment-msg" style="display:none;margin-top:12px">
-              <span class="pill blue">⏳ Verification in progress</span>
-              <p style="margin:8px 0 0;font-size:13px;color:var(--muted)">It will take a few minutes to verify your payment status. Till then you can continue using the panel.</p>
+            <div class="rqr-flip-face rqr-flip-back">
+              <img id="owner-qr-img" src="" alt="UPI QR">
             </div>
-          </div>
-          <div style="text-align:center">
-            <div id="owner-qr-wrapper" style="position:relative;width:180px;min-height:180px;margin:0 auto 8px">
-              <img id="owner-placeholder-img" src="./assets/maharaj.png" alt="Make Payment" style="width:180px;height:180px;object-fit:cover;border-radius:12px;display:block;transition:opacity 0.4s ease,transform 0.4s ease">
-              <img id="owner-qr-img" src="${DEFAULT_QR}" alt="PhonePe QR" style="width:180px;height:180px;object-fit:contain;border-radius:12px;position:absolute;top:0;left:0;opacity:0;transform:scale(0.92);transition:opacity 0.45s ease,transform 0.45s ease;pointer-events:none">
-            </div>
-            <p class="small muted" style="margin:0">PhonePe accepted here</p>
           </div>
         </div>
+
+        <div style="text-align:center;margin:12px 0 16px">
+          <span style="font-size:20px;font-weight:900;color:#1c0e04">₹999</span>
+          <span class="small" style="opacity:.65"> · 30 days access · ${esc(r.name)}</span>
+          <div style="font-size:12px;color:#a89880;margin-top:4px">
+            Current plan expires
+            <strong style="color:${(r.subscriptionEnds - Date.now()) < days(5) ? "#c0392b" : "#2a1a0e"}">${new Date(r.subscriptionEnds).toLocaleDateString("en-IN", {day:"numeric",month:"short",year:"numeric"})}</strong>
+          </div>
+        </div>
+
+        <div style="text-align:center">
+          <button class="btn primary" id="owner-make-payment-btn" onclick="(function(){
+            var slug = '${esc(r.slug)}';
+            var name = '${esc(r.name)}';
+            var amount = 999;
+            var note = 'RENEW-' + slug.toUpperCase().slice(0,20)+ Date.now().toString().slice(-6);
+            var upiId = '7972736023@ybl';
+            var upiLink = 'upi://pay?pa=' + encodeURIComponent(upiId) + '&pn=RestoQR&am=' + amount + '&tn=' + encodeURIComponent(note) + '&cu=INR';
+            var qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(upiLink);
+            var qrImg = document.getElementById('owner-qr-img');
+            var flipInner = document.getElementById('owner-flip-inner');
+            var noteEl = document.getElementById('owner-upi-note');
+            var noteWrap = document.getElementById('owner-upi-note-wrap');
+            var deeplink = document.getElementById('owner-upi-deeplink');
+            var btn = document.getElementById('owner-make-payment-btn');
+            var msg = document.getElementById('owner-payment-msg');
+            if(qrImg) qrImg.src = qrUrl;
+            if(noteEl) noteEl.textContent = note;
+            if(deeplink) deeplink.href = upiLink;
+            if(flipInner) flipInner.classList.add('flipped');
+            if(noteWrap) noteWrap.style.display = 'block';
+            if(deeplink) deeplink.style.display = 'inline-block';
+            if(btn){ btn.disabled = true; btn.style.opacity = '0.55'; btn.textContent = '✅ QR Ready Above'; }
+            if(msg) setTimeout(function(){ msg.style.display='block'; }, 750);
+          })()">💳 Pay ₹999 to Renew</button>
+          <p class="small" id="owner-upi-note-wrap" style="display:none;margin:6px 0 0">Ref: <strong id="owner-upi-note" style="color:#c4a96a;font-family:monospace"></strong></p>
+          <a id="owner-upi-deeplink" href="#" style="display:none;margin-top:8px;font-size:12px;color:#1a73e8;text-decoration:none;font-weight:600">📱 Open in UPI App</a>
+        </div>
+
+        <div id="owner-payment-msg" style="display:none;margin-top:12px">
+          <span class="pill blue">⏳ Verification in progress</span>
+          <p style="margin:8px 0 0;font-size:13px;color:var(--muted)">We'll verify and activate your plan within 2–4 hours. Contact us if it takes longer.</p>
+        </div>
+
+        <style>
+          .rqr-flip{ width:200px;height:200px;margin:0 auto;perspective:1200px; }
+          .rqr-flip-inner{ position:relative;width:100%;height:100%;transition:transform .8s cubic-bezier(.4,.1,.2,1);transform-style:preserve-3d; }
+          .rqr-flip-inner.flipped{ transform:rotateY(180deg); }
+          .rqr-flip-face{ position:absolute;inset:0;backface-visibility:hidden;border-radius:14px;overflow:hidden;background:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(0,0,0,.18); }
+          .rqr-flip-front img{ width:100%;height:100%;object-fit:cover; }
+          .rqr-flip-back{ transform:rotateY(180deg); }
+          .rqr-flip-back img{ width:100%;height:100%;object-fit:contain;padding:10px;box-sizing:border-box; }
+        </style>
       </section>`;
   }
 
@@ -1431,113 +1608,142 @@
     const style = document.createElement("style");
     style.id = "staff-css";
     style.textContent = `
-      .staff-shell { min-height:100vh; background:#f0ebe0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
-      .staff-topbar { position:sticky;top:0;z-index:200;background:linear-gradient(135deg,#1e0f06 0%,#2a1a0e 100%);color:#f5ead8;display:flex;align-items:center;justify-content:space-between;padding:14px 18px;gap:10px;box-shadow:0 2px 12px rgba(0,0,0,.35); }
-      .staff-topbar h1 { font-size:17px;font-weight:800;color:#f5ead8;margin:0;letter-spacing:.01em;display:flex;align-items:center;gap:8px; }
-      .staff-topbar .staff-resto-name { font-size:11px;color:#c4a96a;margin:0 0 2px;letter-spacing:.04em;text-transform:uppercase;font-weight:600; }
-      .staff-tab-bar { display:flex;background:#16090200;border-bottom:1px solid #e0d5c5;background:#fff;box-shadow:0 1px 0 #e0d5c5; }
-      .staff-tab-bar button { flex:1;padding:13px 4px;background:none;border:none;color:#9a8878;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:.03em;border-bottom:3px solid transparent;transition:all .15s; }
-      .staff-tab-bar button.active { color:#2a1a0e;border-bottom-color:#c4a96a;background:#fdf8f0; }
-      .staff-body { padding:16px;padding-bottom:100px; }
-      .staff-empty { text-align:center;color:#9a8878;padding:48px 20px;font-size:14px; }
-      .staff-empty .se-icon { font-size:44px;margin-bottom:12px; }
-      .staff-section-lbl { font-size:11px;font-weight:800;color:#9a8878;text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px;padding-bottom:8px;border-bottom:1.5px solid #e8dcc8; }
-      .s-order-card { background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;border:1px solid #e8dcc8;box-shadow:0 1px 4px rgba(42,26,14,.06); }
-      .s-order-card .oc-head { display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px; }
-      .s-order-card .oc-table { font-size:20px;font-weight:800;color:#2a1a0e; }
-      .s-order-card .oc-id { font-size:11px;color:#9a8878;margin-top:3px; }
-      .s-order-card .oc-items { border-top:1px dashed #e8dcc8;padding-top:10px;margin-bottom:10px; }
-      .s-order-card .oc-item-row { display:flex;justify-content:space-between;font-size:14px;padding:4px 0;color:#3a2510; }
-      .s-order-card .oc-total { display:flex;justify-content:space-between;font-weight:800;font-size:15px;border-top:1.5px solid #e8dcc8;padding-top:10px;color:#2a1a0e;margin-top:2px; }
-      .s-order-card .oc-actions { display:flex;gap:8px;margin-top:14px;flex-wrap:wrap; }
-      .s-order-card .oc-note { font-size:12px;color:#9a8878;background:#faf5ec;border-radius:8px;padding:7px 10px;margin:6px 0;border-left:3px solid #c4a96a; }
-      .spill { display:inline-block;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.02em; }
-      .spill.green { background:#d4edda;color:#155724; }
-      .spill.amber { background:#fff3cd;color:#7a5c1e; }
-      .spill.red   { background:#f8d7da;color:#721c24; }
-      .spill.blue  { background:#cce5ff;color:#004085; }
-      .spill.gray  { background:#e8dcc8;color:#5a4030; }
-      .sbtn { flex:1;min-width:0;padding:12px 10px;border-radius:10px;font-size:13px;font-weight:700;border:none;cursor:pointer;transition:transform .1s,opacity .1s,box-shadow .1s;text-align:center; }
-      .sbtn:active { transform:scale(0.97);opacity:.85; }
-      .sbtn.primary { background:#c4a96a;color:#2a1a0e;box-shadow:0 2px 6px rgba(196,169,106,.35); }
-      .sbtn.ok      { background:#27ae60;color:#fff;box-shadow:0 2px 6px rgba(39,174,96,.3); }
-      .sbtn.danger  { background:#c0392b;color:#fff;box-shadow:0 2px 6px rgba(192,57,43,.3); }
-      .sbtn.plain   { background:#f0e8d8;color:#5a4030;border:1px solid #d4c4a8; }
-      .staff-login-wrap { padding:24px 16px; }
-      .staff-login-card { background:#fff;border-radius:18px;padding:28px 24px;border:1px solid #e8dcc8;max-width:380px;margin:0 auto;box-shadow:0 4px 20px rgba(42,26,14,.1); }
-      .staff-login-card h2 { margin:0 0 6px;color:#2a1a0e;font-size:22px;font-weight:800; }
-      .staff-login-card p { color:#9a8878;font-size:13px;margin:0 0 20px; }
-      .staff-input { width:100%;box-sizing:border-box;padding:13px 14px;border:1.5px solid #e8dcc8;border-radius:10px;font-size:16px;margin-bottom:12px;background:#faf5ec;color:#2a1a0e;outline:none;transition:border-color .15s; }
-      .staff-input:focus { border-color:#c4a96a;box-shadow:0 0 0 3px rgba(196,169,106,.15); }
-      .staff-role-row { display:flex;gap:8px;margin-bottom:20px; }
-      .role-btn { flex:1;padding:12px;border-radius:10px;border:1.5px solid #e8dcc8;background:#faf5ec;color:#5a4030;font-size:13px;font-weight:600;cursor:pointer;text-align:center;transition:all .15s; }
-      .role-btn.selected { background:#c4a96a;border-color:#c4a96a;color:#2a1a0e;box-shadow:0 2px 8px rgba(196,169,106,.3); }
-      .waiter-alert { background:linear-gradient(135deg,#c0392b,#a93226);color:#fff;border-radius:14px;padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 3px 12px rgba(192,57,43,.3); }
+      /* ── STAFF SHELL ─────────────────────────────────────────────── */
+      .staff-shell { min-height:100vh; background:#f5f0e8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+
+      /* ── TOPBAR ──────────────────────────────────────────────────── */
+      .staff-topbar {
+        position:sticky; top:0; z-index:200;
+        background:linear-gradient(135deg,#1c0e04 0%,#2e1a0a 100%);
+        color:#f5ead8; display:flex; align-items:center;
+        justify-content:space-between; padding:16px 20px; gap:12px;
+        box-shadow:0 4px 24px rgba(0,0,0,.45);
+      }
+      .staff-topbar h1 { font-size:18px;font-weight:800;color:#f5ead8;margin:0;letter-spacing:-.01em; }
+      .staff-topbar .staff-resto-name { font-size:10px;color:#c4a96a;margin:0 0 3px;letter-spacing:.08em;text-transform:uppercase;font-weight:700; }
+
+      /* ── TAB BAR ─────────────────────────────────────────────────── */
+      .staff-tab-bar {
+        display:flex; background:#fff;
+        border-bottom:2px solid #ede6d8;
+        box-shadow:0 2px 8px rgba(42,26,14,.06);
+      }
+      .staff-tab-bar button {
+        flex:1; padding:16px 8px; background:none; border:none;
+        color:#a89880; font-size:14px; font-weight:700; cursor:pointer;
+        letter-spacing:.01em; border-bottom:3px solid transparent;
+        transition:all .18s; position:relative;
+      }
+      .staff-tab-bar button.active {
+        color:#2a1a0e; border-bottom-color:#c4a96a; background:#fdf8f0;
+      }
+      .stab-badge {
+        display:inline-flex; align-items:center; justify-content:center;
+        background:#c0392b; color:#fff; border-radius:10px;
+        font-size:10px; font-weight:800; padding:1px 5px;
+        margin-left:4px; vertical-align:middle;
+      }
+      .stab-badge-hot { background:#e07a30; }
+
+      /* ── BODY ────────────────────────────────────────────────────── */
+      .staff-body { padding:16px 14px; padding-bottom:100px; }
+
+      /* ── SECTION LABEL ───────────────────────────────────────────── */
+      .staff-section-lbl {
+        font-size:10px; font-weight:800; color:#a89880;
+        text-transform:uppercase; letter-spacing:.1em;
+        margin:20px 0 10px; padding-bottom:8px;
+        border-bottom:1.5px solid #e8dcc8;
+      }
+
+      /* ── EMPTY STATE ─────────────────────────────────────────────── */
+      .staff-empty { text-align:center; color:#a89880; padding:52px 20px; font-size:15px; }
+      .staff-empty .se-icon { font-size:48px; margin-bottom:14px; display:block; }
+
+      /* ── ORDER CARD ──────────────────────────────────────────────── */
+      .s-order-card {
+        background:#fff; border-radius:16px; padding:16px;
+        margin-bottom:12px; border:1px solid #e8dcc8;
+        box-shadow:0 2px 8px rgba(42,26,14,.06);
+      }
+      .s-order-card .oc-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; }
+      .s-order-card .oc-table { font-size:20px; font-weight:800; color:#1c0e04; letter-spacing:-.01em; }
+      .s-order-card .oc-id { font-size:11px; color:#a89880; margin-top:3px; }
+      .s-order-card .oc-items { border-top:1px dashed #e8dcc8; padding-top:10px; margin-bottom:10px; }
+      .s-order-card .oc-item-row { display:flex; justify-content:space-between; font-size:14px; padding:4px 0; color:#3a2510; }
+      .s-order-card .oc-total { display:flex; justify-content:space-between; font-weight:800; font-size:16px; border-top:2px solid #e8dcc8; padding-top:10px; color:#1c0e04; margin-top:4px; }
+      .s-order-card .oc-actions { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+      .s-order-card .oc-note { font-size:12px; color:#a89880; background:#faf5ec; border-radius:8px; padding:8px 12px; margin:8px 0; border-left:3px solid #c4a96a; }
+
+      /* ── STATUS PILLS ────────────────────────────────────────────── */
+      .spill { display:inline-block; padding:4px 10px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.02em; }
+      .spill.green { background:#d4edda; color:#155724; }
+      .spill.amber { background:#fff3cd; color:#7a5c1e; }
+      .spill.red   { background:#f8d7da; color:#721c24; }
+      .spill.blue  { background:#cce5ff; color:#004085; }
+      .spill.gray  { background:#ede6d8; color:#5a4030; }
+
+      /* ── ACTION BUTTONS ──────────────────────────────────────────── */
+      .sbtn {
+        flex:1; min-width:0; padding:13px 10px; border-radius:12px;
+        font-size:13px; font-weight:700; border:none; cursor:pointer;
+        transition:transform .12s, box-shadow .12s; text-align:center;
+      }
+      .sbtn:active { transform:scale(0.96); }
+      .sbtn.primary { background:#c4a96a; color:#1c0e04; box-shadow:0 3px 10px rgba(196,169,106,.4); }
+      .sbtn.ok      { background:#1e8a50; color:#fff; box-shadow:0 3px 10px rgba(30,138,80,.3); }
+      .sbtn.danger  { background:#c0392b; color:#fff; box-shadow:0 3px 10px rgba(192,57,43,.3); }
+      .sbtn.plain   { background:#f0e8d8; color:#5a4030; border:1.5px solid #d4c4a8; }
+
+      /* ── WAITER ALERT ────────────────────────────────────────────── */
+      .waiter-alert {
+        background:linear-gradient(135deg,#c0392b,#9b2c1f);
+        color:#fff; border-radius:14px; padding:14px 16px; margin-bottom:12px;
+        display:flex; align-items:center; justify-content:space-between;
+        gap:12px; box-shadow:0 4px 16px rgba(192,57,43,.35);
+      }
       .waiter-alert .wa-info { flex:1; }
-      .waiter-alert .wa-table { font-size:18px;font-weight:800; }
-      .waiter-alert .wa-msg { font-size:12px;opacity:.85;margin-top:2px; }
-      .floor-plan-wrap { background:linear-gradient(135deg,#1a0f06 0%,#2a1a0e 100%);border-radius:16px;padding:18px 14px 14px;border:2px solid #4a2f18;box-shadow:inset 0 2px 8px rgba(0,0,0,.4),0 4px 20px rgba(0,0,0,.3);overflow:hidden;position:relative; }
-      .floor-plan-svg { width:100%;display:block; }
-      .tbl-sheet-bg { position:fixed;inset:0;background:rgba(42,26,14,.55);z-index:500;display:flex;align-items:flex-end;backdrop-filter:blur(2px); }
-      .tbl-sheet { background:#fff;border-radius:22px 22px 0 0;padding:20px 18px 44px;width:100%;box-sizing:border-box;max-height:85vh;overflow-y:auto;box-shadow:0 -8px 32px rgba(0,0,0,.2); }
-      .tbl-sheet-handle { width:40px;height:4px;background:#e8dcc8;border-radius:2px;margin:0 auto 18px; }
-      .svg-chair { fill:#2a1408;stroke:#5a3018;stroke-width:1; }
-      .svg-table-no { fill:#c4a96a;font-size:11px;font-weight:800;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central; }
-      .svg-amt { fill:#a08060;font-size:7px;font-weight:600;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central; }
-      @keyframes pulse-red { 0%,100%{box-shadow:0 0 0 3px rgba(231,76,60,.35);}50%{box-shadow:0 0 0 7px rgba(231,76,60,.1);} }
-      .staff-topbar { position:sticky;top:0;z-index:200;background:#2a1a0e;color:#f5ead8;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:10px; }
-      .staff-topbar h1 { font-size:16px;font-weight:700;color:#f5ead8;margin:0;letter-spacing:.02em; }
-      .staff-topbar .staff-resto-name { font-size:12px;color:#c4a96a;margin:0; }
-      .staff-tab-bar { display:flex;background:#1a0f06;border-bottom:1px solid #3a2510; }
-      .staff-tab-bar button { flex:1;padding:12px 4px;background:none;border:none;color:#8a7060;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;border-bottom:2.5px solid transparent;transition:all .15s; }
-      .staff-tab-bar button.active { color:#c4a96a;border-bottom-color:#c4a96a; }
-      .staff-body { padding:14px;padding-bottom:100px; }
-      .staff-empty { text-align:center;color:#9a8878;padding:40px 20px;font-size:14px; }
-      .staff-empty .se-icon { font-size:40px;margin-bottom:10px; }
-      .staff-section-lbl { font-size:11px;font-weight:700;color:#9a8878;text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid #e8dcc8; }
-      .s-order-card { background:#fff;border-radius:14px;padding:14px;margin-bottom:12px;border:1px solid #e8dcc8; }
-      .s-order-card .oc-head { display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px; }
-      .s-order-card .oc-table { font-size:18px;font-weight:800;color:#2a1a0e; }
-      .s-order-card .oc-id { font-size:11px;color:#9a8878;margin-top:2px; }
-      .s-order-card .oc-items { border-top:1px dashed #e8dcc8;padding-top:10px;margin-bottom:10px; }
-      .s-order-card .oc-item-row { display:flex;justify-content:space-between;font-size:14px;padding:3px 0;color:#3a2510; }
-      .s-order-card .oc-total { display:flex;justify-content:space-between;font-weight:700;font-size:15px;border-top:1px solid #e8dcc8;padding-top:8px;color:#2a1a0e; }
-      .s-order-card .oc-actions { display:flex;gap:8px;margin-top:12px;flex-wrap:wrap; }
-      .s-order-card .oc-note { font-size:12px;color:#9a8878;background:#faf5ec;border-radius:6px;padding:6px 8px;margin:6px 0; }
-      .spill { display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase; }
-      .spill.green { background:#d4edda;color:#155724; }
-      .spill.amber { background:#fff3cd;color:#7a5c1e; }
-      .spill.red   { background:#f8d7da;color:#721c24; }
-      .spill.blue  { background:#cce5ff;color:#004085; }
-      .spill.gray  { background:#e8dcc8;color:#5a4030; }
-      .sbtn { flex:1;min-width:0;padding:11px 10px;border-radius:10px;font-size:13px;font-weight:700;border:none;cursor:pointer;transition:transform .1s,opacity .1s;text-align:center; }
-      .sbtn:active { transform:scale(0.97);opacity:.85; }
-      .sbtn.primary { background:#c4a96a;color:#2a1a0e; }
-      .sbtn.ok      { background:#27ae60;color:#fff; }
-      .sbtn.danger  { background:#c0392b;color:#fff; }
-      .sbtn.plain   { background:#f0e8d8;color:#5a4030;border:1px solid #d4c4a8; }
-      .staff-login-wrap { padding:24px 16px; }
-      .staff-login-card { background:#fff;border-radius:16px;padding:24px;border:1px solid #e8dcc8;max-width:380px;margin:0 auto; }
-      .staff-login-card h2 { margin:0 0 6px;color:#2a1a0e;font-size:20px; }
-      .staff-login-card p { color:#9a8878;font-size:13px;margin:0 0 20px; }
-      .staff-input { width:100%;box-sizing:border-box;padding:12px 14px;border:1.5px solid #e8dcc8;border-radius:10px;font-size:16px;margin-bottom:12px;background:#faf5ec;color:#2a1a0e;outline:none;transition:border-color .15s; }
-      .staff-input:focus { border-color:#c4a96a; }
-      .staff-role-row { display:flex;gap:8px;margin-bottom:16px; }
-      .role-btn { flex:1;padding:11px;border-radius:10px;border:1.5px solid #e8dcc8;background:#faf5ec;color:#5a4030;font-size:13px;font-weight:600;cursor:pointer;text-align:center;transition:all .15s; }
-      .role-btn.selected { background:#c4a96a;border-color:#c4a96a;color:#2a1a0e; }
-      .waiter-alert { background:#c0392b;color:#fff;border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px; }
-      .waiter-alert .wa-info { flex:1; }
-      .waiter-alert .wa-table { font-size:18px;font-weight:800; }
-      .waiter-alert .wa-msg { font-size:12px;opacity:.85;margin-top:2px; }
-      .floor-plan-wrap { background:linear-gradient(135deg,#1a0f06 0%,#2a1a0e 100%);border-radius:16px;padding:18px 14px 14px;border:2px solid #4a2f18;box-shadow:inset 0 2px 8px rgba(0,0,0,.4),0 4px 20px rgba(0,0,0,.3);overflow:hidden;position:relative; }
-      .floor-plan-svg { width:100%;display:block; }
-      .tbl-sheet-bg { position:fixed;inset:0;background:rgba(42,26,14,.5);z-index:500;display:flex;align-items:flex-end; }
-      .tbl-sheet { background:#fff;border-radius:20px 20px 0 0;padding:20px 16px 40px;width:100%;box-sizing:border-box;max-height:85vh;overflow-y:auto; }
-      .tbl-sheet-handle { width:36px;height:4px;background:#e8dcc8;border-radius:2px;margin:0 auto 16px; }
-      .svg-chair { fill:#2a1408;stroke:#5a3018;stroke-width:1; }
-      .svg-table-no { fill:#c4a96a;font-size:11px;font-weight:800;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central; }
-      .svg-amt { fill:#a08060;font-size:7px;font-weight:600;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central; }
-      @keyframes pulse-red { 0%,100%{box-shadow:0 0 0 3px rgba(231,76,60,.35);}50%{box-shadow:0 0 0 7px rgba(231,76,60,.1);} }
+      .waiter-alert .wa-table { font-size:19px; font-weight:800; }
+      .waiter-alert .wa-msg { font-size:12px; opacity:.85; margin-top:3px; }
+
+      /* ── FLOOR PLAN ──────────────────────────────────────────────── */
+      .floor-plan-wrap {
+        background:linear-gradient(160deg,#180c04 0%,#2a1a0e 100%);
+        border-radius:18px; padding:20px 16px 16px;
+        border:2px solid #4a2f18;
+        box-shadow:inset 0 2px 12px rgba(0,0,0,.5), 0 6px 28px rgba(0,0,0,.3);
+        overflow:hidden; position:relative;
+      }
+      .floor-plan-svg { width:100%; display:block; cursor:pointer; }
+
+      /* ── BOTTOM SHEET ────────────────────────────────────────────── */
+      .tbl-sheet-bg {
+        position:fixed; inset:0; background:rgba(20,10,4,.65);
+        z-index:500; display:flex; align-items:flex-end;
+        backdrop-filter:blur(4px);
+      }
+      .tbl-sheet {
+        background:#fff; border-radius:26px 26px 0 0;
+        padding:22px 20px 48px; width:100%; box-sizing:border-box;
+        max-height:88vh; overflow-y:auto;
+        box-shadow:0 -12px 48px rgba(0,0,0,.25);
+      }
+      .tbl-sheet-handle { width:44px; height:5px; background:#e0d5c5; border-radius:3px; margin:0 auto 20px; }
+
+      /* ── SVG ELEMENTS ────────────────────────────────────────────── */
+      .svg-table-no { fill:#c4a96a; font-size:11px; font-weight:800; font-family:-apple-system,sans-serif; text-anchor:middle; dominant-baseline:central; }
+      .svg-amt { fill:#a08060; font-size:7px; font-weight:600; font-family:-apple-system,sans-serif; text-anchor:middle; dominant-baseline:central; }
+
+      /* ── TABLE STATS ─────────────────────────────────────────────── */
+      .tbl-stats { display:flex; gap:10px; margin-bottom:14px; }
+      .tbl-stat { flex:1; background:#1c0e04; border-radius:12px; padding:12px 10px; text-align:center; border:1px solid #3a2010; }
+      .tbl-stat .ts-num { font-size:22px; font-weight:800; }
+      .tbl-stat .ts-lbl { font-size:10px; color:#7a5a38; text-transform:uppercase; letter-spacing:.07em; font-weight:700; margin-top:2px; }
+
+      /* ── ANIMATIONS ──────────────────────────────────────────────── */
+      @keyframes pulse-red { 0%,100%{box-shadow:0 0 0 3px rgba(231,76,60,.35);}50%{box-shadow:0 0 0 8px rgba(231,76,60,.08);} }
+      @keyframes slide-up { from{transform:translateY(30px);opacity:0} to{transform:translateY(0);opacity:1} }
+      .tbl-sheet { animation:slide-up .22s ease; }
     `;
     document.head.appendChild(style);
   })();
@@ -1576,24 +1782,26 @@
   // STAFF DASHBOARD — login view
   // ================================================================
   function staffLoginView(r) {
+    const hasKey = !!(r.masterKeyHash);
     return `<div class="staff-shell">
       <div class="staff-topbar">
         <div><p class="staff-resto-name">${esc(r.name)}</p><h1>Staff Login</h1></div>
-        <a href="#/owner?resto=${r.slug}" style="color:#c4a96a;font-size:12px;text-decoration:none">Owner panel ›</a>
+        <a href="#/owner?resto=${r.slug}" style="color:#c4a96a;font-size:12px;text-decoration:none">Owner ›</a>
       </div>
       <div class="staff-login-wrap">
         <div class="staff-login-card">
-          <h2>Staff access</h2>
-          <p>Enter the staff master key to continue. Ask your manager if you don't have it.</p>
-          <label style="font-size:12px;font-weight:700;color:#9a8878;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Your role</label>
-          <div class="staff-role-row">
-            <div class="role-btn ${staffSelectedRole==="waiter"?"selected":""}" data-action="staff-select-role" data-role="waiter">🛎 Waiter</div>
-            <div class="role-btn ${staffSelectedRole==="kitchen"?"selected":""}" data-action="staff-select-role" data-role="kitchen">👨‍🍳 Kitchen</div>
-            <div class="role-btn ${staffSelectedRole==="billing"?"selected":""}" data-action="staff-select-role" data-role="billing">💳 Billing</div>
-          </div>
-          <label style="font-size:12px;font-weight:700;color:#9a8878;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Staff master key</label>
-          <input id="staff-key-input" class="staff-input" type="password" placeholder="Enter master key" autocomplete="off">
-          <button class="sbtn primary" style="width:100%;margin-top:4px" data-action="staff-login" data-slug="${r.slug}">Enter Dashboard</button>
+          <div style="font-size:40px;margin-bottom:12px;text-align:center">🔑</div>
+          <h2 style="text-align:center;margin-bottom:6px">Staff Access</h2>
+          ${hasKey ? `
+            <p style="text-align:center;font-size:13px;color:#a89880;margin-bottom:18px">Enter the master key provided by the restaurant owner.</p>
+            <input id="staff-key-input" class="staff-input" type="password" placeholder="Enter master key" autocomplete="off"
+              onkeydown="if(event.key==='Enter')document.querySelector('[data-action=staff-login]').click()">
+            <button class="sbtn primary" style="width:100%;margin-top:10px" data-action="staff-login" data-slug="${r.slug}">Enter Dashboard</button>
+            <p style="text-align:center;font-size:11px;color:#c4a96a;margin-top:16px;opacity:.7">Unlocks Kitchen · Floor Plan · Billing</p>
+          ` : `
+            <p style="text-align:center;font-size:13px;color:#c0392b;font-weight:600;margin-bottom:0">No master key has been set yet.</p>
+            <p style="text-align:center;font-size:12px;color:#a89880;margin-top:8px">Ask the owner to set one in<br>Owner Panel → Settings → Staff Dashboard.</p>
+          `}
         </div>
       </div>
     </div>`;
@@ -1603,59 +1811,35 @@
   // STAFF DASHBOARD — main dashboard
   // ================================================================
   function staffMainView(r) {
-    const role = staffRole(r.slug);
     const pendingAlerts = state.orders.filter(o => o.restaurantSlug === r.slug && o.waiterRequest && o.status !== "completed").length;
     const activeKitchen = state.orders.filter(o => o.restaurantSlug === r.slug && (o.paymentStatus==="paid"||o.paymentStatus==="cash_sent"||o.paymentStatus==="cash_accepted") && o.status !== "completed" && o.status !== "delivered").length;
-    const activeBilling = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed").length;
+    const activeOrders  = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed").length;
 
-    // Role-based tabs
-    let tabs = [];
-    if (role === "waiter") {
-      tabs = [
-        { id: "waiter",  label: "🛎 Requests" + (pendingAlerts ? ` (${pendingAlerts})` : "") },
-        { id: "tables",  label: "🗺 Floor Plan" },
-      ];
-      if (!["waiter","tables"].includes(staffTab)) staffTab = "waiter";
-    } else if (role === "kitchen") {
-      tabs = [
-        { id: "kitchen", label: "🍳 Kitchen" + (activeKitchen ? ` (${activeKitchen})` : "") },
-        { id: "tables",  label: "🗺 Floor Plan" },
-      ];
-      if (!["kitchen","tables"].includes(staffTab)) staffTab = "kitchen";
-    } else if (role === "billing") {
-      tabs = [
-        { id: "billing", label: "💳 Billing" + (activeBilling ? ` (${activeBilling})` : "") },
-        { id: "tables",  label: "🗺 Floor Plan" },
-      ];
-      if (!["billing","tables"].includes(staffTab)) staffTab = "billing";
-    } else {
-      tabs = [
-        { id: "tables",  label: "🗺 Tables" + (pendingAlerts ? ` (${pendingAlerts})` : "") },
-        { id: "kitchen", label: "🍳 Kitchen" },
-        { id: "billing", label: "💳 Billing" },
-      ];
-    }
+    if (!["kitchen","resto","billing"].includes(staffTab)) staffTab = "kitchen";
+
+    const tabs = [
+      { id: "kitchen", label: "Kitchen" + (activeKitchen ? ` <span class="stab-badge">${activeKitchen}</span>` : "") },
+      { id: "resto",   label: "Floor Plan" },
+      { id: "billing", label: "Billing" + (activeOrders ? ` <span class="stab-badge stab-badge-hot">${activeOrders}</span>` : "") },
+    ];
 
     let body = "";
-    if (staffTab === "waiter")  body = staffWaiterView(r);
-    if (staffTab === "tables")  body = staffTablesView(r);
     if (staffTab === "kitchen") body = staffKitchenView(r);
+    if (staffTab === "resto")   body = staffRestoView(r);
     if (staffTab === "billing") body = staffBillingView(r);
 
     const sheet = staffSheetTable !== null ? staffTableSheetView(r, staffSheetTable) : "";
 
-    const roleLabel = role === "kitchen" ? "👨‍🍳 Kitchen" : role === "billing" ? "💳 Billing" : "🛎 Waiter";
-    const roleColor = role === "kitchen" ? "#e07a30" : role === "billing" ? "#2980b9" : "#c4a96a";
-
     return `<div class="staff-shell" id="staff-app">
       <div class="staff-topbar">
-        <div style="display:flex;align-items:center;gap:12px">
-          <div>
-            <p class="staff-resto-name">${esc(r.name)}</p>
-            <h1 style="display:flex;align-items:center;gap:6px">${roleLabel} <span style="font-size:11px;font-weight:600;background:${roleColor}22;color:${roleColor};border-radius:20px;padding:2px 8px;letter-spacing:.04em;text-transform:uppercase">${role}</span></h1>
-          </div>
+        <div>
+          <p class="staff-resto-name">${esc(r.name)}</p>
+          <h1>Staff Dashboard</h1>
         </div>
-        <button class="sbtn plain" style="flex:none;padding:8px 14px;font-size:12px;background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#f5ead8" data-action="staff-logout" data-slug="${r.slug}">⎋ Logout</button>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${pendingAlerts ? `<div style="background:#e74c3c;color:#fff;border-radius:20px;padding:5px 14px;font-size:12px;font-weight:800;letter-spacing:.02em;animation:pulse-red 1.5s infinite">⚡ ${pendingAlerts} Alert${pendingAlerts>1?"s":""}</div>` : ""}
+          <button class="sbtn plain" style="font-size:11px;padding:7px 12px;background:rgba(255,255,255,.08);color:#c4a96a;border-color:rgba(196,169,106,.3);border:1px solid rgba(196,169,106,.3)" data-action="staff-logout" data-slug="${r.slug}">Exit</button>
+        </div>
       </div>
       <div class="staff-tab-bar">
         ${tabs.map(t => `<button class="${staffTab===t.id?"active":""}" data-action="staff-tab" data-tab="${t.id}">${t.label}</button>`).join("")}
@@ -1740,83 +1924,133 @@
   // ================================================================
   // STAFF DASHBOARD — tables view (SVG floor plan)
   // ================================================================
-  function staffTablesView(r) {
+  function staffRestoView(r) {
     const orders = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
-    const tableCount = r.tableCount || r.tables.length || 4;
+    const tableCount = r.tableCount || r.tables.length || 6;
     const tableNos = Array.from({ length: tableCount }, (_, i) => i + 1);
     orders.forEach(o => { if (!tableNos.includes(o.table)) tableNos.push(o.table); });
     tableNos.sort((a, b) => a - b);
 
-    // Waiter alert banners
+    const freeCount  = tableNos.filter(n => !orders.some(o => o.table===n)).length;
+    const busyCount  = tableNos.filter(n => orders.some(o => o.table===n)).length;
+    const alertCount = tableNos.filter(n => orders.some(o => o.table===n && o.waiterRequest)).length;
+
+    // Alert banners
     const alerts = orders.filter(o => o.waiterRequest);
     let alertHtml = "";
     if (alerts.length) {
-      alertHtml = `<div class="staff-section-lbl">⚡ Waiter Requests (${alerts.length})</div>`;
+      alertHtml = `<div class="staff-section-lbl" style="color:#c0392b;border-color:#f5c6c6">⚡ Requests (${alerts.length})</div>`;
       alerts.forEach(o => {
-        const reqIcon = o.waiterRequest === "bill" ? "💳" : "🔔";
-        const reqType = o.waiterRequest === "bill" ? "Bill requested" : "Waiter called";
-        alertHtml += `<div class="waiter-alert">
-          <div class="wa-info"><div class="wa-table">${reqIcon} Table ${o.table}</div><div class="wa-msg">${reqType} · #${o.id.slice(-5).toUpperCase()} · ${money(o.total)}</div></div>
-          <button class="sbtn plain" style="flex:none;font-size:12px;padding:8px 12px;background:#fff2;color:#fff;border:1.5px solid rgba(255,255,255,.3)" data-action="staff-dismiss-waiter" data-id="${o.id}">Done</button>
+        const isBill = o.waiterRequest === "bill";
+        alertHtml += `<div class="waiter-alert" style="margin-bottom:10px">
+          <div class="wa-info">
+            <div class="wa-table">${isBill?"💳":"🔔"} Table ${o.table}</div>
+            <div class="wa-msg">${isBill?"Bill requested":"Waiter called"} · ${money(o.total)}</div>
+          </div>
+          <button class="sbtn plain" style="flex:none;font-size:12px;padding:8px 14px;background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3)" data-action="staff-dismiss-waiter" data-id="${o.id}">✓ Done</button>
         </div>`;
       });
     }
 
-    if (!tableNos.length) return `${alertHtml}<div class="staff-empty"><div class="se-icon">🪑</div>No tables configured.</div>`;
+    // Build SVG floor plan
+    // Layout: grid of tables with chairs rendered as SVG
+    const cols = Math.min(3, tableNos.length);
+    const rows = Math.ceil(tableNos.length / cols);
+    const TW = 72, TH = 50;   // table rect width/height
+    const CW = 14, CH = 10;   // chair size
+    const GAP_X = 52, GAP_Y = 60;
+    const PAD = 28;
+    const svgW = cols * (TW + GAP_X) + PAD * 2 - GAP_X + CW * 2 + 4;
+    const svgH = rows * (TH + GAP_Y) + PAD * 2 - GAP_Y + CH * 2 + 4 + 40;
 
-    // SVG floor plan
-    const COLS=3, CELL=80, PAD=10;
-    const ROWS = Math.ceil(tableNos.length / COLS);
-    const SVG_W = COLS*CELL+PAD*2, SVG_H = ROWS*CELL+PAD*2;
-    const TW=42, TH=30, CR=5, CO=7;
+    let svgTables = "";
+    tableNos.forEach((no, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const cx = PAD + col * (TW + GAP_X) + CW + 2;
+      const cy = PAD + row * (TH + GAP_Y) + CH + 2 + 30;
 
-    const freeCount  = tableNos.filter(n => !orders.some(o => o.table===n)).length;
-    const busyCount  = tableNos.filter(n => orders.some(o => o.table===n && !o.waiterRequest)).length;
-    const alertCount = tableNos.filter(n => orders.some(o => o.table===n && o.waiterRequest)).length;
-
-    const statsHtml = `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-      <div style="flex:1;min-width:80px;background:#1a0f06;border-radius:10px;padding:10px 12px;border:1px solid #3a2010;text-align:center"><div style="font-size:20px;font-weight:800;color:#c4a96a">${freeCount}</div><div style="font-size:10px;color:#6a4e30;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Free</div></div>
-      <div style="flex:1;min-width:80px;background:#1a0f06;border-radius:10px;padding:10px 12px;border:1px solid #3a2010;text-align:center"><div style="font-size:20px;font-weight:800;color:#e07060">${busyCount}</div><div style="font-size:10px;color:#6a4e30;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Occupied</div></div>
-      <div style="flex:1;min-width:80px;background:#1a0f06;border-radius:10px;padding:10px 12px;border:1px solid #3a2010;text-align:center"><div style="font-size:20px;font-weight:800;color:#ff6a5a">${alertCount}</div><div style="font-size:10px;color:#6a4e30;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Attention</div></div>
-    </div>`;
-
-    const tableSvgs = tableNos.map((no, idx) => {
-      const col = idx % COLS, row = Math.floor(idx / COLS);
-      const cx = PAD + col*CELL + CELL/2, cy = PAD + row*CELL + CELL/2;
       const tOrders = orders.filter(o => o.table === no);
+      const occupied = tOrders.length > 0;
       const hasAlert = tOrders.some(o => o.waiterRequest);
-      const hasOrder = tOrders.length > 0;
-      const tState = hasAlert ? "alert" : hasOrder ? "busy" : "free";
       const total = tOrders.reduce((s, o) => s + o.total, 0);
-      const tx = cx-TW/2, ty = cy-TH/2;
-      const chairs = [[cx-TW/4,ty-CO],[cx+TW/4,ty-CO],[cx-TW/4,ty+TH+CO],[cx+TW/4,ty+TH+CO],[tx-CO,cy],[tx+TW+CO,cy]];
-      const chairsSvg = chairs.map(([x,y])=>`<rect x="${x-CR}" y="${y-CR}" width="${CR*2}" height="${CR*2}" rx="2" fill="${tState==="free"?"#2a1408":tState==="busy"?"#5a1008":"#6a0f08"}" stroke="${tState==="free"?"#5a3018":tState==="busy"?"#a02020":"#e03030"}" stroke-width="1"/>`).join("");
-      const fill = tState==="free" ? "#3a2010" : tState==="busy" ? "#7a1a10" : "#8b1a10";
-      const stroke = tState==="free" ? "#6a3a1a" : tState==="busy" ? "#c0392b" : "#ff4a3a";
-      const tableSvg = `<rect x="${tx}" y="${ty}" width="${TW}" height="${TH}" rx="7" fill="${fill}" stroke="${stroke}" stroke-width="${tState==="alert"?2:1.5}"/>`;
-      const numFill = tState==="free"?"#c4a96a":tState==="busy"?"#ff9a8a":"#ffb8a8";
-      const numSvg = `<text x="${cx}" y="${cy-3}" fill="${numFill}" font-size="11" font-weight="800" font-family="-apple-system,sans-serif" text-anchor="middle" dominant-baseline="central">${no}</text>`;
-      const amtSvg = hasOrder ? `<text x="${cx}" y="${cy+8}" fill="${tState==="busy"?"#ff8070":"#ffa090"}" font-size="7" font-weight="600" font-family="-apple-system,sans-serif" text-anchor="middle" dominant-baseline="central">₹${Math.round(total).toLocaleString("en-IN")}</text>` : "";
-      const bellSvg = hasAlert ? `<text x="${cx+TW/2-2}" y="${cy-TH/2+2}" font-size="8" text-anchor="middle" dominant-baseline="central">${tOrders.find(o=>o.waiterRequest)?.waiterRequest==="bill"?"💳":"🔔"}</text>` : "";
-      const overlay = `<rect x="${cx-CELL/2+2}" y="${cy-CELL/2+2}" width="${CELL-4}" height="${CELL-4}" rx="10" fill="transparent" data-action="staff-open-table" data-table="${no}" style="cursor:pointer"/>`;
-      return `<g>${chairsSvg}${tableSvg}${numSvg}${amtSvg}${bellSvg}${overlay}</g>`;
-    }).join("");
+
+      // Colors: red=occupied, brown/tan=free
+      const tableFill = hasAlert ? "#8b0000" : occupied ? "#8b1a1a" : "#6b4226";
+      const tableStroke = hasAlert ? "#ff4444" : occupied ? "#cc3333" : "#a0632a";
+      const tableLightFill = hasAlert ? "#c0392b" : occupied ? "#a32929" : "#7a4f2e";
+      const chairFill = hasAlert ? "#7a0000" : occupied ? "#7a1515" : "#5a3520";
+      const chairStroke = hasAlert ? "#ff6666" : occupied ? "#b83232" : "#8a5530";
+      const numColor = occupied ? "#ffcccc" : "#e8c9a0";
+      const statusTxt = hasAlert ? (tOrders.find(o=>o.waiterRequest)?.waiterRequest==="bill"?"Bill":"Alert!")
+        : occupied ? money(total) : "Free";
+      const statusColor = hasAlert ? "#ff8080" : occupied ? "#ffaaaa" : "#c4a96a";
+
+      // Chairs: top row (2), bottom row (2), left (1), right (1)
+      const chairsTop = [TW*0.28, TW*0.72].map(ox =>
+        `<rect x="${cx+ox-CW/2}" y="${cy-CH-2}" width="${CW}" height="${CH}" rx="3" fill="${chairFill}" stroke="${chairStroke}" stroke-width="1"/>`
+      ).join("");
+      const chairsBot = [TW*0.28, TW*0.72].map(ox =>
+        `<rect x="${cx+ox-CW/2}" y="${cy+TH+2}" width="${CW}" height="${CH}" rx="3" fill="${chairFill}" stroke="${chairStroke}" stroke-width="1"/>`
+      ).join("");
+      const chairL = `<rect x="${cx-CW-2}" y="${cy+TH*0.35}" width="${CH}" height="${CW}" rx="3" fill="${chairFill}" stroke="${chairStroke}" stroke-width="1"/>`;
+      const chairR = `<rect x="${cx+TW+2}" y="${cy+TH*0.35}" width="${CH}" height="${CW}" rx="3" fill="${chairFill}" stroke="${chairStroke}" stroke-width="1"/>`;
+
+      // Alert pulse ring
+      const alertRing = hasAlert ? `<rect x="${cx-3}" y="${cy-3}" width="${TW+6}" height="${TH+6}" rx="7" fill="none" stroke="#ff4444" stroke-width="2" opacity="0.6" style="animation:pulse-red 1.2s infinite"/>` : "";
+
+      svgTables += `<g class="svg-table-grp" data-action="staff-open-table" data-table="${no}" style="cursor:pointer">
+        ${chairsTop}${chairsBot}${chairL}${chairR}
+        ${alertRing}
+        <rect x="${cx}" y="${cy}" width="${TW}" height="${TH}" rx="5"
+          fill="${tableFill}" stroke="${tableStroke}" stroke-width="1.5"/>
+        <rect x="${cx}" y="${cy}" width="${TW}" height="16" rx="5"
+          fill="${tableLightFill}"/>
+        <rect x="${cx}" y="${cy+11}" width="${TW}" height="5" fill="${tableLightFill}"/>
+        <text x="${cx+TW/2}" y="${cy+9}" class="svg-table-no" style="fill:${numColor};font-size:10px;font-weight:900;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central">${no}</text>
+        <text x="${cx+TW/2}" y="${cy+33}" class="svg-amt" style="fill:${statusColor};font-size:9px;font-weight:700;font-family:-apple-system,sans-serif;text-anchor:middle;dominant-baseline:central">${statusTxt}</text>
+      </g>`;
+    });
+
+    // Legend
+    const legend = `
+      <rect x="8" y="${svgH-22}" width="12" height="8" rx="2" fill="#8b1a1a" stroke="#cc3333" stroke-width="1"/>
+      <text x="24" y="${svgH-15}" style="fill:#a08060;font-size:9px;font-family:-apple-system,sans-serif;dominant-baseline:central">Occupied</text>
+      <rect x="90" y="${svgH-22}" width="12" height="8" rx="2" fill="#6b4226" stroke="#a0632a" stroke-width="1"/>
+      <text x="106" y="${svgH-15}" style="fill:#a08060;font-size:9px;font-family:-apple-system,sans-serif;dominant-baseline:central">Free</text>
+      <rect x="160" y="${svgH-22}" width="12" height="8" rx="2" fill="#8b0000" stroke="#ff4444" stroke-width="1"/>
+      <text x="176" y="${svgH-15}" style="fill:#a08060;font-size:9px;font-family:-apple-system,sans-serif;dominant-baseline:central">Alert</text>
+    `;
+
+    // Room label
+    const roomLabel = `<text x="${svgW/2}" y="18" style="fill:#6a4e30;font-size:11px;font-weight:700;font-family:-apple-system,sans-serif;text-anchor:middle;letter-spacing:0.12em;text-transform:uppercase">DINING AREA</text>
+    <line x1="20" y1="26" x2="${svgW-20}" y2="26" stroke="#3a2010" stroke-width="1"/>`;
+
+    const svgFloor = `<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" class="floor-plan-svg" style="touch-action:manipulation">
+      <rect width="${svgW}" height="${svgH}" rx="12" fill="#1a0e06"/>
+      <rect x="6" y="6" width="${svgW-12}" height="${svgH-12}" rx="10" fill="none" stroke="#3a2010" stroke-width="1.5" stroke-dasharray="4,4"/>
+      ${roomLabel}
+      ${svgTables}
+      ${legend}
+    </svg>`;
+
+    const statsHtml = `<div class="tbl-stats">
+      <div class="tbl-stat"><div class="ts-num" style="color:#c4a96a">${freeCount}</div><div class="ts-lbl">Free</div></div>
+      <div class="tbl-stat"><div class="ts-num" style="color:#e87060">${busyCount}</div><div class="ts-lbl">Occupied</div></div>
+      <div class="tbl-stat"><div class="ts-num" style="color:#ff6a5a">${alertCount}</div><div class="ts-lbl">Alerts</div></div>
+    </div>`;
 
     return `${alertHtml}
     <div class="staff-section-lbl">🍽 Floor Plan — ${tableNos.length} Tables</div>
     ${statsHtml}
-    <div class="floor-plan-wrap">
-      <svg class="floor-plan-svg" viewBox="0 0 ${SVG_W} ${SVG_H}" xmlns="http://www.w3.org/2000/svg">
-        ${tableSvgs}
-        <line x1="${PAD}" y1="${SVG_H-4}" x2="${SVG_W/2-16}" y2="${SVG_H-4}" stroke="#3a2510" stroke-width="1.5" stroke-dasharray="3,3"/>
-        <line x1="${SVG_W/2+16}" y1="${SVG_H-4}" x2="${SVG_W-PAD}" y2="${SVG_H-4}" stroke="#3a2510" stroke-width="1.5" stroke-dasharray="3,3"/>
-        <text x="${SVG_W/2}" y="${SVG_H-3}" text-anchor="middle" dominant-baseline="central" font-size="6" fill="#3a2510" font-family="-apple-system,sans-serif" letter-spacing="1" font-weight="600">ENTRANCE</text>
-      </svg>
-    </div>`;
+    <div class="floor-plan-wrap" style="padding:12px 10px">
+      ${svgFloor}
+    </div>
+    <p style="text-align:center;color:#7a5a38;font-size:11px;margin:14px 0 0;letter-spacing:.05em">TAP A TABLE TO VIEW ORDER DETAILS</p>`;
   }
 
-  // ================================================================
-  // STAFF DASHBOARD — table bottom sheet
+    // ================================================================
+  // STAFF DASHBOARD — table bottom sheet (full billing panel)
   // ================================================================
   function staffTableSheetView(r, tableNo) {
     const orders = state.orders.filter(o => o.restaurantSlug === r.slug && o.table === tableNo && o.status !== "completed");
@@ -1827,54 +2061,98 @@
     const anyCashSent = orders.some(o => o.paymentStatus === "cash_sent");
     const hasAlert = orders.some(o => o.waiterRequest);
     const orderIds = orders.map(o => o.id).join(",");
-    const waitingIds = orders.filter(o=>o.paymentStatus==="waiting").map(o=>o.id).join(",");
-    const cashPendingIds = orders.filter(o=>o.paymentStatus==="cash_pending").map(o=>o.id).join(",");
-    const cashSentIds = orders.filter(o=>o.paymentStatus==="cash_sent").map(o=>o.id).join(",");
+    const waitingIds = orders.filter(o => o.paymentStatus === "waiting").map(o => o.id).join(",");
+    const cashPendingIds = orders.filter(o => o.paymentStatus === "cash_pending").map(o => o.id).join(",");
+    const cashSentIds = orders.filter(o => o.paymentStatus === "cash_sent").map(o => o.id).join(",");
 
+    // Merge all items across orders
     const merged = [];
     orders.forEach(o => {
-      (o.items||[]).forEach(i=>{ const e=merged.find(x=>x.id===i.id); if(e) e.qty+=i.qty; else merged.push({...i}); });
-      (o.addons||[]).forEach(a=>{ const e=merged.find(x=>x._aid===a.id); if(e) e.qty+=(a.qty||1); else merged.push({id:"a_"+a.id,_aid:a.id,name:"+ "+a.name,price:a.price,qty:a.qty||1}); });
+      (o.items||[]).forEach(i => {
+        const e = merged.find(x => x.id === i.id);
+        if (e) e.qty += i.qty; else merged.push({...i});
+      });
+      (o.addons||[]).forEach(a => {
+        const e = merged.find(x => x._aid === a.id);
+        if (e) e.qty += (a.qty||1); else merged.push({id:"a_"+a.id,_aid:a.id,name:"+ "+a.name,price:a.price,qty:a.qty||1});
+      });
     });
 
-    const statusPill = orders.length===0 ? `<span class="spill gray">Free</span>`
-      : allPaid ? `<span class="spill green">✓ Paid</span>`
-      : anyCashSent ? `<span class="spill blue">In Kitchen</span>`
-      : anyCashPending ? `<span class="spill amber">Cash — at counter</span>`
-      : `<span class="spill amber">Payment pending</span>`;
+    // Status
+    const statusLabel = orders.length === 0 ? { text:"Free", cls:"gray" }
+      : allPaid        ? { text:"✓ Paid", cls:"green" }
+      : anyCashSent    ? { text:"🍳 In Kitchen", cls:"blue" }
+      : anyCashPending ? { text:"💵 Cash Pending", cls:"amber" }
+      : anyWaiting     ? { text:"⏳ UPI Check", cls:"amber" }
+      : { text:"No Order", cls:"gray" };
+
+    // Payment breakdown
+    const upiPaid = orders.filter(o => o.paymentStatus === "paid").reduce((s,o) => s+o.total, 0);
+    const cashPaid = orders.filter(o => o.paymentStatus === "cash_accepted").reduce((s,o) => s+o.total, 0);
+    const pending = grandTotal - upiPaid - cashPaid;
+
+    const timeStr = orders.length ? new Date(Math.min(...orders.map(o=>o.createdAt))).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) : "";
 
     return `<div class="tbl-sheet-bg" data-action="staff-close-sheet">
       <div class="tbl-sheet" onclick="event.stopPropagation()">
         <div class="tbl-sheet-handle"></div>
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
-          <div><div style="font-size:26px;font-weight:800;color:#2a1a0e">Table ${tableNo}</div><div style="margin-top:4px">${statusPill}</div></div>
-          <button class="sbtn plain" style="flex:none;padding:8px 12px;font-size:13px" data-action="staff-close-sheet">✕ Close</button>
+
+        <!-- Header -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+          <div>
+            <div style="font-size:11px;color:#a89880;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Table</div>
+            <div style="font-size:36px;font-weight:900;color:#1c0e04;line-height:1;letter-spacing:-.02em">${tableNo}</div>
+            ${timeStr ? `<div style="font-size:12px;color:#a89880;margin-top:3px">Since ${timeStr} · ${orders.length} order${orders.length!==1?"s":""}</div>` : ""}
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+            <span class="spill ${statusLabel.cls}">${statusLabel.text}</span>
+            <button class="sbtn plain" style="flex:none;padding:7px 12px;font-size:12px" data-action="staff-close-sheet">✕</button>
+          </div>
         </div>
+
+        <!-- Alert banner -->
         ${hasAlert ? `<div style="background:linear-gradient(135deg,#fff0ee,#fde8e4);border:2px solid #e74c3c;border-radius:14px;padding:14px 16px;margin-bottom:16px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
             <div>
               <div style="font-size:15px;font-weight:800;color:#c0392b">${orders.find(o=>o.waiterRequest)?.waiterRequest==="bill"?"💳 Bill requested":"🔔 Waiter called"}</div>
-              <div style="font-size:12px;color:#9a8878;margin-top:3px">Customer needs attention at this table</div>
+              <div style="font-size:12px;color:#9a8878;margin-top:3px">Customer needs attention</div>
             </div>
-            <button class="sbtn ok" style="flex:none;padding:10px 16px;font-size:13px;white-space:nowrap" data-action="staff-dismiss-table-alert" data-ids="${orderIds}">✓ Done</button>
+            <button class="sbtn ok" style="flex:none;padding:9px 14px;font-size:13px" data-action="staff-dismiss-table-alert" data-ids="${orderIds}">✓ Done</button>
           </div>
         </div>` : ""}
-        ${orders.length===0
-          ? `<div class="staff-empty" style="padding:24px"><div class="se-icon">🪑</div>Table is free</div>`
-          : `<div style="background:#faf5ec;border-radius:12px;padding:12px 14px;margin-bottom:14px">
-              ${merged.map(i=>`<div style="display:flex;justify-content:space-between;font-size:14px;padding:4px 0;color:#3a2510"><span>${esc(i.name)} × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join("")}
-              <div style="display:flex;justify-content:space-between;font-weight:800;font-size:15px;border-top:1.5px solid #e8dcc8;padding-top:10px;margin-top:6px;color:#2a1a0e"><span>Total</span><span>${money(grandTotal)}</span></div>
-            </div>`}
-        <div style="display:flex;flex-direction:column;gap:9px;margin-top:4px">
-          ${anyWaiting ? `<button class="sbtn ok" data-action="staff-confirm-upi" data-ids="${waitingIds}">✓ UPI Payment Received</button>` : ""}
-          ${anyCashPending ? `<button class="sbtn primary" data-action="staff-send-cash-kitchen" data-ids="${cashPendingIds}">🍳 Send to Kitchen (Cash)</button>` : ""}
-          ${anyCashSent ? `<button class="sbtn ok" data-action="staff-confirm-cash" data-ids="${cashSentIds}">💵 Cash Received</button>` : ""}
-          ${allPaid && orders.length>0 ? `<button class="sbtn danger" data-action="staff-close-table" data-ids="${orderIds}">🔒 Close Table & Free Seat</button>` : ""}
-          ${orders.length>0 ? `<button class="sbtn plain" data-action="print-table-bill" data-ids="${orderIds}">🧾 Print Bill</button>` : ""}
+
+        ${orders.length === 0
+          ? `<div class="staff-empty" style="padding:32px 0"><div class="se-icon">🪑</div>Table is free — no active orders</div>`
+          : `
+        <!-- Bill items -->
+        <div style="background:#faf5ec;border-radius:14px;padding:14px 16px;margin-bottom:14px">
+          <div style="font-size:11px;font-weight:700;color:#a89880;text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px">Order Summary</div>
+          ${merged.map(i => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #ede6d8">
+              <div>
+                <span style="font-size:14px;font-weight:600;color:#2a1a0e">${esc(i.name)}</span>
+                <span style="font-size:13px;color:#a89880;margin-left:6px">× ${i.qty}</span>
+              </div>
+              <span style="font-size:14px;font-weight:700;color:#2a1a0e">${money(i.price * i.qty)}</span>
+            </div>`).join("")}
+          <div style="display:flex;justify-content:space-between;font-weight:900;font-size:18px;margin-top:12px;color:#1c0e04">
+            <span>Total</span><span>${money(grandTotal)}</span>
+          </div>
+          ${(upiPaid > 0 || cashPaid > 0) ? `
+          <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #d4c4a8">
+            ${upiPaid > 0 ? `<div style="display:flex;justify-content:space-between;font-size:12px;color:#1a73e8;font-weight:600"><span>🔵 UPI Paid</span><span>${money(upiPaid)}</span></div>` : ""}
+            ${cashPaid > 0 ? `<div style="display:flex;justify-content:space-between;font-size:12px;color:#27ae60;font-weight:600"><span>💵 Cash Received</span><span>${money(cashPaid)}</span></div>` : ""}
+            ${pending > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;color:#c0392b;font-weight:800;padding-top:6px;border-top:1px solid #e8dcc8;margin-top:6px"><span>⏳ Pending</span><span>${money(pending)}</span></div>` : ""}
+          </div>` : ""}
         </div>
+
+        <div style="background:#f0e8d8;border-radius:12px;padding:14px 16px;text-align:center">
+          <p style="margin:0;font-size:12px;color:#7a5a38;font-weight:600">For billing actions, go to the <strong>Billing</strong> tab</p>
+        </div>`}
       </div>
     </div>`;
   }
+
 
   // ================================================================
   // STAFF DASHBOARD — kitchen view
@@ -1959,12 +2237,6 @@
   // ================================================================
 
   function settingsPanel(r) {
-    const masterKey = (function generateMasterKey(slug) {
-      const raw = slug + "_staff_2024";
-      let h = 0;
-      for (let i = 0; i < raw.length; i++) h = (Math.imul(31, h) + raw.charCodeAt(i)) | 0;
-      return "STF-" + Math.abs(h).toString(16).toUpperCase().padStart(6, "0");
-    })(r.slug);
     return `
       <section class="card" style="max-width:640px">
         <div class="section-head"><div><h2>Restaurant Settings</h2><p>These details show to customers.</p></div></div>
@@ -1998,15 +2270,23 @@
         <div class="section-head">
           <div>
             <h2>Staff Dashboard</h2>
-            <p>Share the master key below with your staff so they can access the live floor plan, kitchen, and billing views.</p>
+            <p>Set a master key — share it with your team to access all staff panels.</p>
           </div>
         </div>
-        <div style="background:#2a1a0e;color:#c4a96a;font-size:24px;font-weight:800;letter-spacing:.15em;text-align:center;border-radius:12px;padding:18px;font-family:monospace;margin:12px 0;border:2px solid #4a2f18">${masterKey}</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <a href="#/staff?resto=${r.slug}" style="flex:1;display:block;padding:12px;border-radius:10px;background:#c4a96a;color:#2a1a0e;font-weight:700;font-size:14px;text-align:center;text-decoration:none">🛎 Open Staff Dashboard</a>
-          <button onclick="navigator.clipboard?.writeText('${masterKey}').then(()=>{var t=document.getElementById('toast');t.textContent='Key copied!';t.hidden=false;clearTimeout(t._t);t._t=setTimeout(()=>t.hidden=true,2400);})" style="flex:1;padding:12px;border-radius:10px;border:1.5px solid #e8dcc8;background:#faf5ec;color:#5a4030;font-weight:700;font-size:14px;cursor:pointer">📋 Copy Key</button>
+        <div class="field">
+          <label>${r.masterKeyHash ? "Change Master Key" : "Set Master Key"}</label>
+          <input id="set-master-key" type="password" placeholder="${r.masterKeyHash ? "Enter new key to change it" : "Choose a strong key e.g. Kitchen@2024"}" autocomplete="new-password">
+          <p class="muted small" style="margin:6px 0 0">
+            ${r.masterKeyHash
+              ? `✅ A master key is already set. Leave blank to keep the existing key, or type a new one to replace it.`
+              : `⚠ No master key set yet. Set one before sharing the staff dashboard link.`}
+          </p>
+          <p class="muted small" style="margin:4px 0 0">The key is stored as a one-way hash — even you cannot read it back. Anyone with it can access Kitchen, Floor Plan, and Billing panels.</p>
         </div>
-        <p class="muted small" style="margin:10px 0 0">⚠ Share this key only with trusted staff. It grants access to order management.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+          <button class="btn primary" data-action="save-settings" data-slug="${r.slug}">Save Key</button>
+          <a href="#/staff?resto=${r.slug}" class="btn">🛎 Open Staff Dashboard</a>
+        </div>
       </section>`;
   }
 
@@ -2468,20 +2748,26 @@
     if (action === "staff-select-role") { staffSelectedRole = el.dataset.role; return render(); }
     if (action === "staff-login") {
       const input = document.getElementById("staff-key-input");
-      const entered = (input ? input.value : "").trim().toUpperCase();
+      const entered = (input ? input.value : "").trim();
       const loginSlug = el.dataset.slug;
-      if (entered === generateMasterKey(loginSlug)) {
-        localStorage.setItem(staffKeyFor(loginSlug), "yes");
-        localStorage.setItem("restoqr_staff_role_" + loginSlug, staffSelectedRole);
-        // Default tab based on role
-        staffTab = staffSelectedRole === "kitchen" ? "kitchen" : staffSelectedRole === "billing" ? "billing" : "waiter";
-        toast("Welcome! Logged in as " + staffSelectedRole);
-        return render();
-      } else {
-        toast("Wrong key — check with your manager");
-        if (input) { input.style.borderColor = "#e74c3c"; setTimeout(() => input.style.borderColor = "", 2000); }
+      const resto = bySlug(loginSlug);
+      if (!entered) { toast("Please enter the master key"); return; }
+      if (!resto || !resto.masterKeyHash) {
+        toast("No master key set yet — ask the owner to set one in Owner Panel → Settings");
         return;
       }
+      hashMasterKey(entered).then(hash => {
+        if (hash === resto.masterKeyHash) {
+          localStorage.setItem(staffKeyFor(loginSlug), "yes");
+          staffTab = "kitchen";
+          toast("Welcome! All panels unlocked.");
+          render();
+        } else {
+          toast("Wrong master key — check with the owner");
+          if (input) { input.value = ""; input.style.borderColor = "#e74c3c"; input.focus(); setTimeout(() => input.style.borderColor = "", 2000); }
+        }
+      });
+      return;
     }
     if (action === "staff-logout") {
       localStorage.removeItem(staffKeyFor(el.dataset.slug));
@@ -2560,20 +2846,62 @@
   }
 
   function registerRestaurant() {
-    const name = val("reg-name"), owner = val("reg-owner"), phone = val("reg-phone"), city = val("reg-city"), pin = val("reg-pin"), upiId = val("reg-upiid"), upi = val("reg-upi"), review = val("reg-review"), coupon = val("reg-coupon").toUpperCase();
+    const name     = val("reg-name");
+    const owner    = val("reg-owner");
+    const phone    = val("reg-phone");
+    const city     = val("reg-city");
+    const pin      = val("reg-pin");
+    const upiId    = val("reg-upiid");
+    const upi      = val("reg-upi");
+    const review   = val("reg-review");
+    const coupon   = val("reg-coupon").toUpperCase();
+    const email    = val("reg-owner-email").toLowerCase();
+    const password = val("reg-owner-password");
+
     if (!name || !owner || !phone || !pin) return toast("Fill restaurant, owner, phone, and PIN");
+    if (firebaseMode && (!email || !password)) return toast("Fill owner email and password");
+    if (firebaseMode && password.length < 6) return toast("Password must be at least 6 characters");
+
     const slug = slugify(name);
     if (bySlug(slug)) return toast("Restaurant name already exists");
-    mutate(s => s.restaurants.push({
-      id: uid(), slug, name, owner, phone, city, ownerPin: pin, active: false, qrEnabled: false,
-      plan: "Pending", subscriptionEnds: Date.now(), paymentQr: DEFAULT_QR, upiId: upiId || "", upiName: upi || owner, googleReviewUrl: review,
-      couponCode: coupon,
-      tables: [1, 2, 3, 4].map(no => ({ no, seats: 4 })),
-      categories: ["Starters", "Main Course", "Breads", "Beverages"],
-      menu: [], addons: [], createdAt: Date.now()
-    }));
-    toast("Registered. Admin can activate after payment.");
-    location.hash = "#/owner?resto=" + slug;
+
+    function saveRestaurant(ownerEmail) {
+      mutate(s => s.restaurants.push({
+        id: uid(), slug, name, owner, phone, city, ownerPin: pin, active: false, qrEnabled: false,
+        plan: "Pending", subscriptionEnds: Date.now(), paymentQr: DEFAULT_QR,
+        upiId: upiId || "", upiName: upi || owner, googleReviewUrl: review,
+        couponCode: coupon,
+        ownerEmail: ownerEmail || "",
+        tables: [1, 2, 3, 4].map(no => ({ no, seats: 4 })),
+        categories: ["Starters", "Main Course", "Breads", "Beverages"],
+        menu: [], addons: [], createdAt: Date.now()
+      }));
+      toast("Registered! You can now log in. Admin will activate your subscription.");
+      location.hash = "#/owner?resto=" + slug;
+    }
+
+    if (firebaseMode && auth) {
+      // Create Firebase Auth account for the owner, then save restaurant
+      const btn = document.querySelector("[data-action='register']");
+      if (btn) { btn.textContent = "Registering…"; btn.disabled = true; }
+
+      auth.createUserWithEmailAndPassword(email, password)
+        .then(() => {
+          saveRestaurant(email);
+        })
+        .catch(e => {
+          if (btn) { btn.textContent = "Submit Registration"; btn.disabled = false; }
+          const msg = {
+            "auth/email-already-in-use": "This email already has an account. Please log in as owner instead.",
+            "auth/invalid-email":        "Please enter a valid email address.",
+            "auth/weak-password":        "Password is too weak. Use at least 6 characters."
+          }[e.code] || ("Registration failed: " + e.message);
+          toast(msg);
+        });
+    } else {
+      // Demo / local mode — no Firebase Auth
+      saveRestaurant(email);
+    }
   }
 
   function ownerLogin(slug) {
@@ -2623,20 +2951,42 @@
   }
 
   function saveSettings(slug) {
-    updateRestaurant(slug, r => {
-      r.name = val("set-name") || r.name;
-      r.owner = val("set-owner") || r.owner;
-      r.phone = val("set-phone") || r.phone;
-      r.upiName = val("set-upi") || r.upiName;
-      r.upiId = val("set-upiid");
-      r.googleReviewUrl = val("set-review") || "";
-      r.paymentQr = val("set-qr") || DEFAULT_QR;
-      const tc = Number(val("set-table-count"));
-      if (tc > 0) r.tableCount = tc;
-      const email = val("set-owner-email");
-      if (email) r.ownerEmail = email.toLowerCase();
-    });
-    toast("Settings saved!");
+    const newMasterKey = val("set-master-key");
+    if (newMasterKey) {
+      // Hash first, then save everything together
+      hashMasterKey(newMasterKey).then(hash => {
+        updateRestaurant(slug, r => {
+          r.name = val("set-name") || r.name;
+          r.owner = val("set-owner") || r.owner;
+          r.phone = val("set-phone") || r.phone;
+          r.upiName = val("set-upi") || r.upiName;
+          r.upiId = val("set-upiid");
+          r.googleReviewUrl = val("set-review") || "";
+          r.paymentQr = val("set-qr") || DEFAULT_QR;
+          const tc = Number(val("set-table-count"));
+          if (tc > 0) r.tableCount = tc;
+          const email = val("set-owner-email");
+          if (email) r.ownerEmail = email.toLowerCase();
+          r.masterKeyHash = hash;
+        });
+        toast("Settings saved! Master key updated.");
+      });
+    } else {
+      updateRestaurant(slug, r => {
+        r.name = val("set-name") || r.name;
+        r.owner = val("set-owner") || r.owner;
+        r.phone = val("set-phone") || r.phone;
+        r.upiName = val("set-upi") || r.upiName;
+        r.upiId = val("set-upiid");
+        r.googleReviewUrl = val("set-review") || "";
+        r.paymentQr = val("set-qr") || DEFAULT_QR;
+        const tc = Number(val("set-table-count"));
+        if (tc > 0) r.tableCount = tc;
+        const email = val("set-owner-email");
+        if (email) r.ownerEmail = email.toLowerCase();
+      });
+      toast("Settings saved!");
+    }
   }
 
   function placeOrder(slug) {

@@ -199,26 +199,33 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 /* ---------- Hero ---------- */
 .hero {
   min-height: calc(100vh - 64px);
-  display: grid;
-  align-items: center;
-  padding: 36px 18px 22px;
- 
+  padding: 40px 18px;
   overflow: hidden;
-  background-image: url('./assets/hero-bg.png');
-  background-size: cover;
-  
-}
-.hero::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, rgba(255,248,238,.94) 0%, rgba(255,248,238,.78) 32%, rgba(255,248,238,.18) 45%, rgba(255,248,238,0) 0%);
-  z-index: 0;
-}
-.hero-inner { max-width: 1500px; margin: 0 auto; display: grid; grid-template-columns: 1fr; gap: 34px; align-items: center; position: relative; z-index: 1; }
 
-.hero-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 400px; margin-right: 25cm; }
-.hero-actions .btn { padding: 12px 18px; border-radius: 999px; }
+  background-image: url('./assets/hero-bg.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover; /* instead of cover */
+}
+
+.hero-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 40px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+
+  margin: 0;
+}
+.hero-actions .btn { padding: 12px 18px; border-radius: 999px;  }
 
 .demo-board { display: grid; gap: 12px; }
 .stat { background: #fff; border: 1px solid var(--line); border-radius: var(--r-md); padding: 15px; box-shadow: var(--shadow-soft); }
@@ -547,4 +554,365 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shad
 }
 .billing-summary .stat strong {
   font-size: 16px; /* smaller than the hero stat, fits in a row */
+}
+
+.media-carousel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.carousel-container {
+  width: 560px;
+  flex-shrink: 0;
+  margin: 0;
+  position: relative;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #111;
+}
+
+.carousel-track {
+  position: relative;
+  height: 340px;
+}
+
+.carousel-slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+.carousel-slide.active {
+  opacity: 1;
+  z-index: 2;
+}
+
+.carousel-slide img,
+.carousel-slide video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Navigation */
+
+.carousel-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  width: 45px;
+  height: 45px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0,0,0,.5);
+  color: white;
+  cursor: pointer;
+  font-size: 20px;
+}
+
+.carousel-btn.prev {
+  left: 15px;
+}
+
+.carousel-btn.next {
+  right: 15px;
+}
+
+.carousel-dots {
+  position: absolute;
+  bottom: 15px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+}
+
+.carousel-dots button {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,.5);
+  cursor: pointer;
+}
+
+.carousel-dots button.active {
+  background: white;
+}
+
+@media (max-width: 768px) {
+
+  .hero {
+    min-height: auto;
+    padding: 20px 12px 40px;
+    background-position: center top;
+    background-size: contain;
+  }
+
+  .hero-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .media-carousel {
+    width: 100%;
+  }
+
+  .carousel-container {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 16px;
+  }
+
+  .carousel-track {
+    height: 220px;
+  }
+
+  .hero-actions {
+    width: 100%;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .hero-actions .btn {
+    min-width: 160px;
+    padding: 12px 16px;
+  }
+}
+/* ================================================================
+   GUIDE STRIP — Owner pamphlet slider on homepage
+   ================================================================ */
+
+.guide-strip {
+  padding: 56px 0 52px;
+  background: var(--cream);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.guide-strip-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.guide-strip-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.guide-strip-head .eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand);
+  margin-bottom: 6px;
+}
+
+.guide-strip-head h3 {
+  font-family: 'Fraunces', ui-serif, Georgia, serif;
+  font-size: clamp(18px, 2.2vw, 24px);
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+  max-width: 480px;
+  line-height: 1.25;
+}
+
+.guide-strip-nav {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.guide-prev,
+.guide-next {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: var(--panel);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+
+.guide-prev:hover,
+.guide-next:hover {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+
+.guide-track-wrap {
+  overflow: hidden;
+  border-radius: var(--r-lg);
+}
+
+.guide-track {
+  display: flex;
+  gap: 16px;
+  transition: transform 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+
+.guide-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 26px 24px 24px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-soft);
+  transition: box-shadow 0.2s;
+}
+
+.guide-card:hover {
+  box-shadow: var(--shadow);
+}
+
+.guide-card-icon {
+  font-size: 24px;
+  width: 50px;
+  height: 50px;
+  background: var(--accent-pale, var(--brand-soft));
+  border-radius: var(--r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.guide-card-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--accent, var(--brand));
+  margin-bottom: 8px;
+}
+
+.guide-card h4 {
+  font-family: 'Fraunces', ui-serif, Georgia, serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.35;
+  margin: 0 0 8px;
+}
+
+.guide-card > p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+
+.guide-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: auto;
+}
+
+.guide-steps li {
+  font-size: 12.5px;
+  color: var(--ink);
+  line-height: 1.45;
+  padding-left: 16px;
+  position: relative;
+}
+
+.guide-steps li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent, var(--brand));
+}
+
+.guide-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 20px;
+}
+
+.guide-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  cursor: pointer;
+  border: none;
+  padding: 0;
+  transition: background 0.2s, width 0.2s, border-radius 0.2s;
+}
+
+.guide-dot.active {
+  background: var(--brand);
+  width: 20px;
+  border-radius: 3px;
+}
+
+@media (max-width: 768px) {
+  .guide-strip { padding: 40px 0 36px; }
+  .guide-strip-head h3 { font-size: 17px; }
+}
+
+@media (max-width: 480px) {
+  .guide-strip-head h3 { font-size: 17px; }
+}
+
+#carousel-mute-btn {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: background 0.18s, transform 0.15s;
+  line-height: 1;
+}
+
+#carousel-mute-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+  transform: scale(1.08);
 }

@@ -14,6 +14,7 @@
   let cart = {};
   let selectedAddons = {}; // addonId -> true
   let billingDateFilter = new Date().toISOString().slice(0, 10); // YYYY-MM-DD, default today
+  let carouselInitialized = false; // Flag to ensure carousel is initialized only once
 
   // ================================================================
   // STAFF DASHBOARD — state
@@ -455,14 +456,51 @@
       
       <main class="hero">
         <div class="hero-inner">
-          <section>
-            
-            <div class="hero-actions">
+          <section class="media-carousel">
+          <div class="carousel-container">
+            <div class="carousel-track">
+              <div class="carousel-slide active" id="video-slide">
+                <video autoplay playsinline id="carousel-video">
+                  <source src="assets/intro.mp4" type="video/mp4">
+                </video>
+                <button id="carousel-mute-btn" aria-label="Toggle mute" title="Toggle mute">🔊</button>
+              </div>
+              
+              <div class="carousel-slide">
+                <img src="assets/demo1.png" alt="Restaurant Demo">
+              </div>
+
+              
+
+              <div class="carousel-slide">
+                <img src="assets/demo2.png" alt="Restaurant Demo">
+              </div>
+
+              <div class="carousel-slide">
+                <img src="assets/demo3.png  " alt="Restaurant Demo">
+              </div>
+              <div class="carousel-slide">
+                <img src="assets/demo4.png" alt="Restaurant Demo">
+              </div>
+
+            </div>
+
+            <button class="carousel-btn prev">❮</button>
+            <button class="carousel-btn next">❯</button>
+
+            <div class="carousel-dots"></div>
+          </div>
+          <div class="hero-actions">
               ${heroActions}
             </div>
-          </section>
+        </section>
+          
+            
+            
+          
         </div>
       </main>
+      
 
       
 
@@ -479,6 +517,92 @@
             ${featureCard("growth", "Built for repeat visits", "Collect a rating after every order and route happy customers straight to your Google listing.")}
             ${featureCard("customize", "Make it yours", "Add categories, add-ons, and table QR codes in minutes — no designer or developer needed.")}
           </div>
+        </div>
+      </section>
+
+      <section class="guide-strip">
+        <div class="guide-strip-inner">
+          <div class="guide-strip-head">
+            <div>
+              <p class="eyebrow">Owner Guide</p>
+              <h3>Everything you need to know, one slide at a time.</h3>
+            </div>
+            <div class="guide-strip-nav">
+              <button class="guide-prev" aria-label="Previous">&#8592;</button>
+              <button class="guide-next" aria-label="Next">&#8594;</button>
+            </div>
+          </div>
+          <div class="guide-track-wrap">
+            <div class="guide-track">
+
+              <div class="guide-card" style="--accent:#FF6B2B;--accent-pale:#FFF0E9">
+                <div class="guide-card-icon">📱</div>
+                <div class="guide-card-tag">QR Ordering</div>
+                <h4>Customers scan &amp; order from their own phone</h4>
+                <p>Each table gets a unique QR code. Customers browse your live menu and place orders — no app, no waiter needed to write it down.</p>
+                <ul class="guide-steps">
+                  <li>Print QR codes from Owner Panel → QR Codes tab</li>
+                  <li>Customer scans → browses menu → confirms order</li>
+                  <li>Order appears instantly on your Kitchen screen</li>
+                  <li>You get an audio alert for every new order 🔔</li>
+                </ul>
+              </div>
+
+              <div class="guide-card" style="--accent:#7B4FD4;--accent-pale:#F0EAFF">
+                <div class="guide-card-icon">🤖</div>
+                <div class="guide-card-tag">AI Assistant</div>
+                <h4>Ask your sales data anything in plain language</h4>
+                <p>The floating AI button on every owner page lets you ask questions like you'd ask a colleague — no spreadsheets needed.</p>
+                <ul class="guide-steps">
+                  <li>"What was my best seller this week?"</li>
+                  <li>"How much chicken do I need tomorrow?"</li>
+                  <li>"Which items are rarely ordered?"</li>
+                  <li>"Compare this week vs last week revenue"</li>
+                </ul>
+              </div>
+
+              <div class="guide-card" style="--accent:#2B6FFF;--accent-pale:#E6EEFF">
+                <div class="guide-card-icon">📊</div>
+                <div class="guide-card-tag">Analytics & Billing</div>
+                <h4>Your numbers, always up to date</h4>
+                <p>Track revenue, top items, and payment status without any manual counting. Filter by date and print records in one tap.</p>
+                <ul class="guide-steps">
+                  <li>Overview tab shows today's revenue and top sellers</li>
+                  <li>Billing tab lets you filter by any date range</li>
+                  <li>Mark orders as Cash Paid or UPI Paid instantly</li>
+                  <li>Print receipts directly from any order</li>
+                </ul>
+              </div>
+
+              <div class="guide-card" style="--accent:#2D9B6F;--accent-pale:#E6F7F0">
+                <div class="guide-card-icon">🔑</div>
+                <div class="guide-card-tag">Staff Access</div>
+                <h4>Give your team access without sharing your login</h4>
+                <p>Generate a Master Key from Settings and share it with staff. They get Kitchen, Floor Plan, and Billing — nothing else.</p>
+                <ul class="guide-steps">
+                  <li>Owner Panel → Settings → Generate Master Key</li>
+                  <li>Share the key with your team via WhatsApp</li>
+                  <li>Staff enter it once on their device — done</li>
+                  <li>Regenerate anytime to revoke old access instantly</li>
+                </ul>
+              </div>
+
+              <div class="guide-card" style="--accent:#FF6B2B;--accent-pale:#FFF0E9">
+                <div class="guide-card-icon">🏪</div>
+                <div class="guide-card-tag">Owner Panel</div>
+                <h4>Run your entire restaurant from one screen</h4>
+                <p>Log in once with your email and stay signed in. Every tool you need is one tab away — menu, orders, billing, QR codes, and AI.</p>
+                <ul class="guide-steps">
+                  <li>Menu tab — add items, prices, addons, categories</li>
+                  <li>Orders tab — live view with table and item details</li>
+                  <li>QR Codes tab — download and print table codes</li>
+                  <li>Settings tab — update info and manage staff key</li>
+                </ul>
+              </div>
+
+            </div>
+          </div>
+          <div class="guide-dots"></div>
         </div>
       </section>
 
@@ -3344,6 +3468,145 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (tag === "textarea") return `<div class="field"><label>${label}</label><textarea id="${id}" placeholder="${placeholder || ""}">${value}</textarea></div>`;
     return `<div class="field"><label>${label}</label><input id="${id}" type="${type || "text"}" placeholder="${placeholder || ""}" value="${esc(value)}"></div>`;
   }
+  function initCarousel() {
+    const slides = document.querySelectorAll(".carousel-slide");
+    const dotsWrap = document.querySelector(".carousel-dots");
+    if (!slides.length) return;
+
+    let current = 0;
+    let autoTimer = null;
+
+    // Build dots
+    slides.forEach((_, i) => {
+      const dot = document.createElement("button");
+      if (i === 0) dot.classList.add("active");
+      dot.addEventListener("click", () => showSlide(i));
+      dotsWrap.appendChild(dot);
+    });
+    const dots = dotsWrap.querySelectorAll("button");
+
+    // Mute button wiring
+    const muteBtn = document.getElementById("carousel-mute-btn");
+    const video   = document.getElementById("carousel-video");
+    if (muteBtn && video) {
+      muteBtn.addEventListener("click", () => {
+        video.muted = !video.muted;
+        muteBtn.textContent = video.muted ? "🔇" : "🔊";
+      });
+    }
+
+    function showSlide(index) {
+      const outVideo = slides[current].querySelector("video");
+      if (outVideo) { outVideo.pause(); outVideo.currentTime = 0; }
+
+      slides[current].classList.remove("active");
+      dots[current].classList.remove("active");
+      current = (index + slides.length) % slides.length;
+      slides[current].classList.add("active");
+      dots[current].classList.add("active");
+
+      const inVideo = slides[current].querySelector("video");
+      if (inVideo) {
+        stopAuto();
+        inVideo.currentTime = 0;
+        inVideo.muted = video ? video.muted : false;
+        if (muteBtn) muteBtn.textContent = inVideo.muted ? "🔇" : "🔊";
+        inVideo.play().catch(() => { inVideo.muted = true; if (muteBtn) muteBtn.textContent = "🔇"; inVideo.play(); });
+        inVideo.onended = () => { inVideo.onended = null; showSlide(current + 1); };
+      } else {
+        startAuto();
+      }
+    }
+
+    function startAuto() {
+      stopAuto();
+      autoTimer = setInterval(() => showSlide(current + 1), 5000);
+    }
+    function stopAuto() {
+      if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    }
+
+    document.querySelector(".carousel-btn.next")?.addEventListener("click", () => {
+      const v = slides[current].querySelector("video");
+      if (v) { v.onended = null; v.pause(); }
+      showSlide(current + 1);
+    });
+    document.querySelector(".carousel-btn.prev")?.addEventListener("click", () => {
+      const v = slides[current].querySelector("video");
+      if (v) { v.onended = null; v.pause(); }
+      showSlide(current - 1);
+    });
+
+    // Kick off with video slide (index 0)
+    if (video) {
+      video.muted = false;
+      video.play().catch(() => { video.muted = true; if (muteBtn) muteBtn.textContent = "🔇"; video.play(); });
+      video.onended = () => { video.onended = null; showSlide(1); };
+    } else {
+      startAuto();
+    }
+  }
+
+  function initGuideStrip() {
+    const wrap    = document.querySelector(".guide-track-wrap");
+    const track   = document.querySelector(".guide-track");
+    const cards   = track ? Array.from(track.querySelectorAll(".guide-card")) : [];
+    const dotsWrap = document.querySelector(".guide-dots");
+    const prevBtn  = document.querySelector(".guide-prev");
+    const nextBtn  = document.querySelector(".guide-next");
+
+    if (!cards.length || !dotsWrap || !wrap) return;
+
+    let current = 0;
+    const GAP = 16;
+
+    function visibleCount() {
+      return window.innerWidth < 768 ? 1 : 3;
+    }
+
+    function cardWidth() {
+      const n = visibleCount();
+      return (wrap.offsetWidth - GAP * (n - 1)) / n;
+    }
+
+    function applyWidths() {
+      const w = cardWidth();
+      cards.forEach(c => { c.style.minWidth = w + "px"; c.style.maxWidth = w + "px"; });
+    }
+
+    // Build dots
+    cards.forEach((_, i) => {
+      const dot = document.createElement("button");
+      dot.className = "guide-dot" + (i === 0 ? " active" : "");
+      dot.addEventListener("click", () => goTo(i));
+      dotsWrap.appendChild(dot);
+    });
+    const dots = dotsWrap.querySelectorAll(".guide-dot");
+
+    function goTo(index) {
+      const max = Math.max(0, cards.length - visibleCount());
+      current = Math.max(0, Math.min(index, max));
+      const offset = current * (cardWidth() + GAP);
+      track.style.transform = `translateX(-${offset}px)`;
+      dots.forEach((d, i) => d.classList.toggle("active", i === current));
+    }
+
+    prevBtn?.addEventListener("click", () => goTo(current - 1));
+    nextBtn?.addEventListener("click", () => goTo(current + 1));
+
+    let startX = 0;
+    track.addEventListener("touchstart", e => { startX = e.touches[0].clientX; }, { passive: true });
+    track.addEventListener("touchend", e => {
+      const diff = startX - e.changedTouches[0].clientX;
+      if (Math.abs(diff) > 40) goTo(diff > 0 ? current + 1 : current - 1);
+    });
+
+    window.addEventListener("resize", () => { applyWidths(); goTo(current); });
+
+    // Init
+    applyWidths();
+    goTo(0);
+  }
 
   function stat(label, value) { return `<div class="stat"><p>${label}</p><strong>${value}</strong></div>`; }
   function empty(text) { return `<div class="empty">${text}</div>`; }
@@ -3365,7 +3628,18 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
   function sameDay(a, b) { return new Date(a).toDateString() === new Date(b).toDateString(); }
   function isRestaurantOpen(r) { return !!(r && r.active && r.qrEnabled && Number(r.subscriptionEnds || 0) > Date.now()); }
   function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
-  function html(s) { app.innerHTML = s; }
+  function html(s) {
+    app.innerHTML = s;
+
+  requestAnimationFrame(() => {
+    if (document.querySelector(".media-carousel")) {
+      initCarousel();
+    }
+    if (document.querySelector(".guide-track")) {
+      initGuideStrip();
+    }
+  });
+}
   function toast(msg) {
     toastEl.textContent = msg;
     toastEl.hidden = false;

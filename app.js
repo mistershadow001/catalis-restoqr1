@@ -459,16 +459,11 @@
           <section class="media-carousel">
           <div class="carousel-container">
             <div class="carousel-track">
-              <div class="carousel-slide active" id="video-slide">
-                <iframe
-                  src="https://www.youtube.com/embed/wKurYY4WfNc?autoplay=1&mute=1&rel=0"
-                  width="560"
-                  height="360"
-                  frameborder="0"
-                  allow="autoplay; encrypted-media"
-                  allowfullscreen>
-                </iframe>
+            <div class="carousel-slide">
+                <img src="assets/intro1.png" alt="Restaurant Demo">
               </div>
+              
+              
               
               <div class="carousel-slide">
                 <img src="assets/demo1.png" alt="Restaurant Demo">
@@ -3485,55 +3480,37 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
   slides.forEach((_, i) => {
     const dot = document.createElement("button");
     if (i === 0) dot.classList.add("active");
-
-    dot.addEventListener("click", () => {
-      showSlide(i);
-    });
-
+    dot.addEventListener("click", () => showSlide(i));
     dotsWrap.appendChild(dot);
   });
 
   const dots = dotsWrap.querySelectorAll("button");
 
   function stopAuto() {
-    if (autoTimer) {
-      clearInterval(autoTimer);
-      autoTimer = null;
-    }
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   }
 
   function startAuto() {
     stopAuto();
-
-    autoTimer = setInterval(() => {
-      showSlide(current + 1);
-    }, 5000);
+    autoTimer = setInterval(() => showSlide(current + 1), 5000);
   }
 
   function showSlide(index) {
     slides[current].classList.remove("active");
     dots[current].classList.remove("active");
-
     current = (index + slides.length) % slides.length;
-
     slides[current].classList.add("active");
     dots[current].classList.add("active");
-
-    stopAuto();
-
-    // Don't auto-slide while YouTube video slide is active
-   
+    startAuto();
   }
 
-  document.querySelector(".carousel-btn.next")?.addEventListener("click", () => {
-    showSlide(current + 1);
-  });
+  document.querySelector(".carousel-btn.next")?.addEventListener("click", () => showSlide(current + 1));
+  document.querySelector(".carousel-btn.prev")?.addEventListener("click", () => showSlide(current - 1));
 
-  document.querySelector(".carousel-btn.prev")?.addEventListener("click", () => {
-    showSlide(current - 1);
-  });
+  const carouselEl = document.querySelector(".carousel-container");
+  carouselEl?.addEventListener("mouseenter", stopAuto);
+  carouselEl?.addEventListener("mouseleave", startAuto);
 
-  // Start on video slide
   showSlide(0);
 }
 

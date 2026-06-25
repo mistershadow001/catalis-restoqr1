@@ -511,14 +511,15 @@ Rules:
     // ── Update UI on slider move ──
     function updateSlider(pct) {
       currentPct = pct;
-      const high = pct >= 80;
+      slider.value = pct;
 
-      // Thumb position
-      const thumbPct = pct / 100;
-      const trackW = track.offsetWidth;
+      // Thumb position — recalculate track width each time
+      const trackW = track.getBoundingClientRect().width || track.offsetWidth;
       const thumbW = 38;
-      const left = thumbPct * (trackW - thumbW) + thumbW / 2;
+      const left = (pct / 100) * (trackW - thumbW) + thumbW / 2;
       thumb.style.left = left + "px";
+
+      const high = pct >= 80;
 
       // Emoji
       const band = getBand(pct, lang);
@@ -551,8 +552,8 @@ Rules:
       renderKeywords(pct);
     }
 
-    // Init
-    updateSlider(80);
+    // Init — defer until DOM is painted so offsetWidth is correct
+    requestAnimationFrame(() => updateSlider(currentPct));
 
     slider.addEventListener("input", () => {
       // Hide cards when sliding

@@ -3481,9 +3481,11 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
 
         function update(pct) {
           var high = pct >= 80;
-          // thumb position
-          var tw = track.offsetWidth, th = 38;
-          thumb.style.left = "calc(" + pct + "% - " + (pct/100 * th) + "px)";
+          // thumb position — use getBoundingClientRect for accuracy after paint
+          var tw = track.getBoundingClientRect().width || track.offsetWidth || 300;
+          var th = 38;
+          var left = (pct / 100) * (tw - th) + th / 2;
+          thumb.style.left = left + "px";
           // emoji
           thumb.textContent = pct >= 90 ? "🤩" : pct >= 80 ? "😊" : pct >= 65 ? "🙂" : pct >= 40 ? "😐" : "😞";
           // pct label
@@ -3510,11 +3512,12 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         }
 
         slider.addEventListener("input", function(){ update(parseInt(slider.value)); });
-        update(80);
+        // Defer init until after DOM is painted so track width is available
+        requestAnimationFrame(function(){ update(parseInt(slider.value)); });
 
         ctaBtn.addEventListener("click", function(){
           var pct = parseInt(slider.value);
-          if (window.RestoReview) {
+          function doShow() {
             window._rqr_slug = ${JSON.stringify(r.slug)};
             window.RestoReview.show({
               restaurantName: ${JSON.stringify(r.name)},
@@ -3525,11 +3528,23 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
               db: (typeof db !== "undefined" ? db : null),
               firebaseMode: (typeof firebaseMode !== "undefined" ? firebaseMode : false)
             });
+          }
+          if (window.RestoReview) {
+            doShow();
           } else {
-            // Fallback if review-generator.js not loaded
-            if (pct >= 80 && ${JSON.stringify(r.googleReviewUrl || "")}) {
-              window.open(${JSON.stringify(r.googleReviewUrl || "#")}, "_blank");
-            }
+            // Script not ready yet — wait up to 5s then show
+            var attempts = 0;
+            var wait = setInterval(function() {
+              attempts++;
+              if (window.RestoReview) { clearInterval(wait); doShow(); }
+              else if (attempts > 50) {
+                clearInterval(wait);
+                // Fallback: open Google review URL directly
+                if (pct >= 80 && ${JSON.stringify(r.googleReviewUrl || "")}) {
+                  window.open(${JSON.stringify(r.googleReviewUrl || "#")}, "_blank");
+                }
+              }
+            }, 100);
           }
         });
       })();

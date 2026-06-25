@@ -252,11 +252,14 @@
 
     // Listen for feedback events from review-generator and save to state
     document.addEventListener("restoqr:feedback", function(e) {
-      const { restaurantName, text, satisfaction } = e.detail || {};
+      const { restaurantName, restaurantSlug, text, satisfaction } = e.detail || {};
+      // Resolve slug from restaurantSlug (preferred) or fall back to name match
+      const resolvedSlug = restaurantSlug || state.restaurants.find(r => r.name === restaurantName)?.slug || "";
       mutate(s => {
         s.feedbacks = s.feedbacks || [];
         s.feedbacks.push({
           id: uid(),
+          restaurantSlug: resolvedSlug,
           restaurantName: restaurantName || "",
           text: text || "",
           satisfaction: satisfaction || 0,
@@ -292,15 +295,13 @@
             db.child("billingArchive").set(state.billingArchive || []);
           }
         } else if (!value) {
-          // Truly empty DB — seed only the app data, never touch admins node
+          // Truly empty DB — seed only the writable app data nodes, never touch meta or admins
           const s = seed();
-          db.child("meta").set(s.meta);
           db.child("restaurants").set(s.restaurants);
           db.child("orders").set(s.orders);
           db.child("feedbacks").set(s.feedbacks);
           db.child("billingArchive").set(s.billingArchive);
-          // Do NOT call save(seed()) — that would overwrite the entire restoqr node
-          // including any manually added admins
+          // Do NOT write meta — rules block it (.write: false)
         }
         // If value exists but has no restaurants yet (e.g. only admins node),
         // just normalize what we have without overwriting
@@ -473,8 +474,7 @@
     archiveOldOrders(state);
     checkNewOrders(state);
     if (firebaseMode && db) {
-      // Only write app data keys — never touch the admins node
-      db.child("meta").set(state.meta || {});
+      // Never write meta (rules: .write false) or admins — only app data nodes
       db.child("restaurants").set(state.restaurants || []);
       db.child("orders").set(state.orders || []);
       db.child("feedbacks").set(state.feedbacks || []);
@@ -501,7 +501,8 @@
     const r = route();
     if (r.path !== "/owner") return null;
     const slug = r.params.get("resto") || localStorage.getItem("restoqr_owner_slug") || "";
-    if (slug && currentUser) return slug;
+    // In Firebase mode require a signed-in user; in local mode the slug alone is enough
+    if (slug && (firebaseMode ? !!currentUser : true)) return slug;
     return null;
   }
 
@@ -1268,10 +1269,19 @@
   }
 
   function ownerView(params) {
-    // Firebase mode: if logged in, resolve slug from their account first
+    // Firebase mode: if not logged in, show login immediately
+    if (firebaseMode && !currentUser) return authLoginView("owner");
+
     if (firebaseMode && currentUser) {
       const linkedSlug = ownerSlugForUser(currentUser);
       const adminUser  = isAdmin(currentUser);
+
+      // State may not have loaded yet from Firebase DB listener — show a spinner
+      // instead of "restaurant not found" which confuses owners on hard refresh.
+      if (!linkedSlug && !adminUser && !_adminCheckInFlight && state.restaurants.length === 0) {
+        return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
+      }
+
       // If owner has a linked restaurant and no explicit slug in URL, redirect to theirs
       if (linkedSlug && !params.get("resto")) {
         location.replace("#/owner?resto=" + linkedSlug);
@@ -1285,10 +1295,19 @@
     }
 
     const slug = params.get("resto") || (firebaseMode && currentUser ? ownerSlugForUser(currentUser) : null) || localStorage.getItem("restoqr_owner_slug") || (state.restaurants[0]?.slug || "");
+
+    // Persist slug so refreshes don't lose context (non-Firebase mode & convenience)
+    if (slug) localStorage.setItem("restoqr_owner_slug", slug);
+
     const r = bySlug(slug);
-    // Firebase mode: if not logged in, always show login form first
-    if (firebaseMode && !currentUser) return authLoginView("owner");
-    if (!r) return shell("Owner Panel", `<section class="card">${empty("Restaurant not found")}<a class="btn primary" href="#/register">Register</a></section>`, "owner");
+    if (!r) {
+      // In Firebase mode with a signed-in user but no match yet, show spinner
+      // (DB listener might still be loading)
+      if (firebaseMode && currentUser && state.restaurants.length === 0) {
+        return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
+      }
+      return shell("Owner Panel", `<section class="card">${empty("Restaurant not found. Your account may not be linked to a restaurant yet.")}<a class="btn primary" href="#/register">Register Restaurant</a></section>`, "owner");
+    }
     // Firebase mode: require signed-in owner email linked to this restaurant
     if (firebaseMode) {
       if (!currentUser) return authLoginView("owner");
@@ -1774,10 +1793,16 @@
       const s = document.createElement("script");
       s.src = "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js";
       s.onload = () => { window._chartjsReady = true; render(); };
+      s.onerror = () => {
+        // Reset flags so the next tab switch retries loading
+        window._chartjsLoaded = false;
+        window._chartjsReady = false;
+        render();
+      };
       document.head.appendChild(s);
     }
     if (!window._chartjsReady) {
-      return `<section class="card"><div class="empty">Loading charts...</div></section>`;
+      return `<section class="card"><div class="empty">Loading charts… <button class="btn" onclick="window._chartjsLoaded=false;window._chartjsReady=false;document.querySelector('[data-action=owner-tab][data-tab=analytics]')?.click()">Retry</button></div></section>`;
     }
 
     const allOrders = state.orders.filter(o => o.restaurantSlug === r.slug);
@@ -1853,13 +1878,13 @@
     const monthLabel = new Date(selYear, selMonth, 1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
 
     // Unique chart IDs per render to avoid canvas reuse issues
-    const uid = Date.now();
-    const cRevenue  = "ch-revenue-"  + uid;
-    const cHours    = "ch-hours-"    + uid;
-    const cDays     = "ch-days-"     + uid;
-    const cPayment  = "ch-payment-"  + uid;
-    const cItems    = "ch-items-"    + uid;
-    const cFeedback = "ch-feedback-" + uid;
+    const chartUid = Date.now();
+    const cRevenue  = "ch-revenue-"  + chartUid;
+    const cHours    = "ch-hours-"    + chartUid;
+    const cDays     = "ch-days-"     + chartUid;
+    const cPayment  = "ch-payment-"  + chartUid;
+    const cItems    = "ch-items-"    + chartUid;
+    const cFeedback = "ch-feedback-" + chartUid;
 
     // Schedule chart draws after DOM is painted
     setTimeout(() => {
@@ -1991,8 +2016,9 @@
       <section class="card">
         <div class="section-head">
           <div><h2>📊 Analytics</h2><p>Business insights for ${monthLabel}</p></div>
-          <select onchange="window._analyticsMonth=Number(this.value.split('-')[1]);window._analyticsYear=Number(this.value.split('-')[0]);document.querySelector('[data-action=owner-tab][data-tab=analytics]').click()"
-            style="padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:13px;background:var(--card,#fff)">
+          <select onchange="(function(v){var parts=v.split('-');window._analyticsMonth=Number(parts[1]);window._analyticsYear=Number(parts[0]);})(this.value)"
+            style="padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:13px;background:var(--card,#fff)"
+            data-action="analytics-month-select">
             ${monthsWithOrders.map(m => {
               const lbl = new Date(m.year,m.month,1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
               const val = m.year+"-"+m.month;
@@ -3345,8 +3371,10 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         ctaBtn.addEventListener("click", function(){
           var pct = parseInt(slider.value);
           if (window.RestoReview) {
+            window._rqr_slug = ${JSON.stringify(r.slug)};
             window.RestoReview.show({
               restaurantName: ${JSON.stringify(r.name)},
+              restaurantSlug: ${JSON.stringify(r.slug)},
               googleReviewUrl: ${JSON.stringify(r.googleReviewUrl || "")},
               lang: lang,
               satisfaction: pct,
@@ -3748,13 +3776,17 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     }
 
     if (firebaseMode && auth) {
-      // Create Firebase Auth account for the owner, then save restaurant
+      // Create Firebase Auth account for the owner, then save restaurant.
+      // createUserWithEmailAndPassword automatically signs the new user in,
+      // which triggers onAuthStateChanged — we save AFTER that fires so the
+      // write to Firebase happens with a fully authenticated session.
       const btn = document.querySelector("[data-action='register']");
       if (btn) { btn.textContent = "Registering…"; btn.disabled = true; }
 
       auth.createUserWithEmailAndPassword(email, password)
-        .then(() => {
-          saveRestaurant(email);
+        .then(credential => {
+          // Auth is now settled with the new user — safe to write to Firebase
+          saveRestaurant(credential.user.email || email);
         })
         .catch(e => {
           if (btn) { btn.textContent = "Submit Registration"; btn.disabled = false; }
@@ -3765,6 +3797,8 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
           }[e.code] || ("Registration failed: " + e.message);
           toast(msg);
         });
+    } else {
+      toast("Firebase is not configured. Registration requires Firebase.");
     }
   }
 
@@ -4214,6 +4248,12 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (!el) return;
     if (el.dataset.action === "billing-date-pick" || el.dataset.action === "billing-date-select") {
       billingDateFilter = el.value;
+      render();
+    }
+    if (el.dataset.action === "analytics-month-select") {
+      const parts = el.value.split("-");
+      window._analyticsYear  = Number(parts[0]);
+      window._analyticsMonth = Number(parts[1]);
       render();
     }
   });

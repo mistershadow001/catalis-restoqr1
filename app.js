@@ -43,8 +43,38 @@
   }
 
   function staffKeyFor(slug) { return "restoqr_staff_" + slug; }
-  function isStaffUnlocked(slug) { return localStorage.getItem(staffKeyFor(slug)) === "yes"; }
-  function staffRole(slug) { return localStorage.getItem("restoqr_staff_role_" + slug) || "waiter"; }
+  // Staff auth: requires Firebase Auth login + active record under restoqr/staff/<slug>/<uid>
+  // staffMembers cache is populated by listenStaffMembers() when staff panel is open
+  let _staffMembers = {};  // { [slug]: { [uid]: { name, role, active } } }
+  function isStaffUnlocked(slug) {
+    if (!firebaseMode) return localStorage.getItem(staffKeyFor(slug)) === "yes"; // local fallback
+    if (!currentUser) return false;
+    const record = (_staffMembers[slug] || {})[currentUser.uid];
+    return !!(record && record.active);
+  }
+  function staffRole(slug) {
+    if (firebaseMode && currentUser) {
+      const record = (_staffMembers[slug] || {})[currentUser.uid];
+      return (record && record.role) || "waiter";
+    }
+    return localStorage.getItem("restoqr_staff_role_" + slug) || "waiter";
+  }
+  function currentStaffName(slug) {
+    if (firebaseMode && currentUser) {
+      const record = (_staffMembers[slug] || {})[currentUser.uid];
+      return (record && record.name) || currentUser.email || "Staff";
+    }
+    return "Staff";
+  }
+  let _staffListeners = {}; // slug -> true, to avoid duplicate listeners
+  function listenStaffMembers(slug) {
+    if (!firebaseMode || !db || _staffListeners[slug]) return;
+    _staffListeners[slug] = true;
+    db.child("staff").child(slug).on("value", snap => {
+      _staffMembers[slug] = snap.val() || {};
+      render();
+    });
+  }
 
   // Hash a master key with SHA-256 via Web Crypto — returns hex string promise
   async function hashMasterKey(key) {
@@ -1878,7 +1908,15 @@
       <div class="row">
         <div>
           <strong>Table ${table}</strong>
-          <p class="muted small">${orders.length} order${orders.length > 1 ? "s" : ""} · ${new Date(orders[0].createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
+          <p class="muted small">${orders.length} order${orders.length > 1 ? "s" : ""} · ${new Date(orders[0].createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}${(() => {
+            const closer = orders.find(o => o.closedBy)?.closedBy;
+            const upiBy  = orders.find(o => o.upiConfirmedBy)?.upiConfirmedBy;
+            const cashBy = orders.find(o => o.cashConfirmedBy)?.cashConfirmedBy;
+            if (closer)  return ` · 🔒 Closed by ${esc(closer.name)}`;
+            if (upiBy)   return ` · ✅ UPI by ${esc(upiBy.name)}`;
+            if (cashBy)  return ` · 💵 Cash by ${esc(cashBy.name)}`;
+            return "";
+          })()}</p>
         </div>
         <span class="pill ${tableStatus}">${tableLabel}</span>
       </div>
@@ -1894,7 +1932,13 @@
       ${orders.length > 1 ? `
         <div style="margin-top:8px;padding:8px;background:var(--bg,#f9f5ef);border-radius:8px">
           <p style="margin:0 0 4px;font-size:11px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">Individual Orders</p>
-          ${orders.map(o => `<p style="margin:2px 0;font-size:12px;color:var(--muted,#6b7280)">#${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · ${money(o.total)} · <span style="color:${o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted"?"var(--ok)":"#b5790c"}">${o.paymentStatus==="paid"?"UPI Paid":o.paymentStatus==="cash_accepted"?"Cash Received":o.paymentStatus==="cash_sent"?"In Kitchen":o.paymentStatus==="cash_pending"?"Cash Pending":"Pending"}</span></p>`).join("")}
+          ${orders.map(o => {
+            const staffTag = o.closedBy ? ` · 🔒 ${esc(o.closedBy.name)}`
+              : o.upiConfirmedBy ? ` · ✅ ${esc(o.upiConfirmedBy.name)}`
+              : o.cashConfirmedBy ? ` · 💵 ${esc(o.cashConfirmedBy.name)}`
+              : "";
+            return `<p style="margin:2px 0;font-size:12px;color:var(--muted,#6b7280)">#${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · ${money(o.total)} · <span style="color:${o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted"?"var(--ok)":"#b5790c"}">${o.paymentStatus==="paid"?"UPI Paid":o.paymentStatus==="cash_accepted"?"Cash Received":o.paymentStatus==="cash_sent"?"In Kitchen":o.paymentStatus==="cash_pending"?"Cash Pending":"Pending"}</span><span style="color:#a89880">${staffTag}</span></p>`;
+          }).join("")}
         </div>` : ""}
 
       <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
@@ -2714,6 +2758,7 @@
     // Check alerts on each render
     checkStaffAlerts(slug);
 
+    listenStaffMembers(slug);
     if (!isStaffUnlocked(slug)) return staffLoginView(resto);
     return staffMainView(resto);
   }
@@ -2725,7 +2770,7 @@
   // STAFF DASHBOARD — login view
   // ================================================================
   function staffLoginView(r) {
-    const hasKey = !!(r.masterKeyHash);
+    const isFirebase = firebaseMode && !!auth;
     return `<div class="staff-shell">
       <div class="staff-topbar">
         <div><p class="staff-resto-name">${esc(r.name)}</p><h1>Staff Login</h1></div>
@@ -2735,15 +2780,20 @@
         <div class="staff-login-card">
           <div style="font-size:40px;margin-bottom:12px;text-align:center">🔑</div>
           <h2 style="text-align:center;margin-bottom:6px">Staff Access</h2>
-          ${hasKey ? `
+          ${isFirebase ? `
+            <p style="text-align:center;font-size:13px;color:#a89880;margin-bottom:18px">Sign in with your staff credentials.</p>
+            <input id="staff-email-input" class="staff-input" type="email" placeholder="your@email.com" autocomplete="username" style="margin-bottom:8px">
+            <input id="staff-pass-input" class="staff-input" type="password" placeholder="Password" autocomplete="current-password"
+              onkeydown="if(event.key==='Enter')document.querySelector('[data-action=staff-login]').click()">
+            <button class="sbtn primary" style="width:100%;margin-top:10px" data-action="staff-login" data-slug="${r.slug}">Sign In</button>
+            <p id="staff-login-err" style="color:#c0392b;font-size:12px;text-align:center;margin-top:8px;min-height:16px"></p>
+            <p style="text-align:center;font-size:11px;color:#c4a96a;margin-top:8px;opacity:.7">Your account must be created by the restaurant owner.</p>
+          ` : `
             <p style="text-align:center;font-size:13px;color:#a89880;margin-bottom:18px">Enter the master key provided by the restaurant owner.</p>
             <input id="staff-key-input" class="staff-input" type="password" placeholder="Enter master key" autocomplete="off"
               onkeydown="if(event.key==='Enter')document.querySelector('[data-action=staff-login]').click()">
             <button class="sbtn primary" style="width:100%;margin-top:10px" data-action="staff-login" data-slug="${r.slug}">Enter Dashboard</button>
             <p style="text-align:center;font-size:11px;color:#c4a96a;margin-top:16px;opacity:.7">Unlocks Kitchen · Floor Plan · Billing</p>
-          ` : `
-            <p style="text-align:center;font-size:13px;color:#c0392b;font-weight:600;margin-bottom:0">No master key has been set yet.</p>
-            <p style="text-align:center;font-size:12px;color:#a89880;margin-top:8px">Ask the owner to set one in<br>Owner Panel → Settings → Staff Dashboard.</p>
           `}
         </div>
       </div>
@@ -2777,7 +2827,7 @@
       <div class="staff-topbar">
         <div>
           <p class="staff-resto-name">${esc(r.name)}</p>
-          <h1>Staff Dashboard</h1>
+          <h1>Staff Dashboard${firebaseMode && currentUser ? ` <span style="font-size:12px;font-weight:400;color:#c4a96a">· ${esc(currentStaffName(r.slug))}</span>` : ""}</h1>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           ${pendingAlerts ? `<div style="background:#e74c3c;color:#fff;border-radius:20px;padding:5px 14px;font-size:12px;font-weight:800;letter-spacing:.02em;animation:pulse-red 1.5s infinite">⚡ ${pendingAlerts} Alert${pendingAlerts>1?"s":""}</div>` : ""}
@@ -3178,6 +3228,39 @@
   // END STAFF DASHBOARD VIEWS
   // ================================================================
 
+  function staffMembersList(slug) {
+    listenStaffMembers(slug);
+    const members = _staffMembers[slug] || {};
+    const entries = Object.entries(members);
+    if (!entries.length) return `<p class="muted small" style="margin:0">No staff added yet.</p>`;
+    return `<table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:1.5px solid #e8dcc8;color:#a89880">
+        <th style="text-align:left;padding:6px 8px">Name</th>
+        <th style="text-align:left;padding:6px 8px">Email</th>
+        <th style="text-align:left;padding:6px 8px">Role</th>
+        <th style="text-align:left;padding:6px 8px">Status</th>
+        <th style="padding:6px 8px"></th>
+      </tr></thead>
+      <tbody>
+        ${entries.map(([uid, m]) => `
+          <tr style="border-bottom:1px solid #f0e8dc">
+            <td style="padding:8px">${esc(m.name || "—")}</td>
+            <td style="padding:8px;color:#a89880;font-size:12px">${esc(m.email || "—")}</td>
+            <td style="padding:8px">${esc(m.role || "waiter")}</td>
+            <td style="padding:8px">${m.active
+              ? `<span style="color:#27ae60;font-weight:700">● Active</span>`
+              : `<span style="color:#e74c3c;font-weight:700">○ Inactive</span>`}</td>
+            <td style="padding:8px;text-align:right">
+              <button class="sbtn ${m.active ? "danger" : "ok"}" style="font-size:11px;padding:5px 10px"
+                data-action="staff-toggle-active" data-slug="${slug}" data-uid="${uid}" data-active="${m.active ? "1" : "0"}">
+                ${m.active ? "Deactivate" : "Reactivate"}
+              </button>
+            </td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+  }
+
   function settingsPanel(r) {
     return `
       <section class="card" style="max-width:640px">
@@ -3211,32 +3294,26 @@
       <section class="card" style="max-width:640px;margin-top:14px">
         <div class="section-head">
           <div>
-            <h2>Staff Dashboard</h2>
-            <p>Set a master key — share it with your team to access all staff panels.</p>
+            <h2>Staff Management</h2>
+            <p>Add staff accounts — they log in with email and password on their own devices.</p>
           </div>
         </div>
-        <div class="field">
-          <label>${r.masterKeyHash ? "Change Master Key" : "Set Master Key"}</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input id="set-master-key" type="text" placeholder="${r.masterKeyHash ? "Enter new key to change it" : "Click Generate or type your own"}" autocomplete="new-password" style="flex:1">
-            <button type="button" class="btn blue" onclick="(function(){
-              const bytes = crypto.getRandomValues(new Uint8Array(18));
-              const key = 'STF-' + Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join('').toUpperCase().slice(0,24);
-              const input = document.getElementById('set-master-key');
-              if(input){ input.value = key; input.type = 'text'; }
-            })()">Generate</button>
+        ${firebaseMode ? `
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+            <input id="staff-add-name"  class="field input" type="text"     placeholder="Name (e.g. Ravi)"          style="flex:1;min-width:120px">
+            <input id="staff-add-email" class="field input" type="email"    placeholder="Email"                      style="flex:1;min-width:160px">
+            <input id="staff-add-pass"  class="field input" type="password" placeholder="Password (min 6 chars)"     style="flex:1;min-width:140px">
+            <select id="staff-add-role" class="field input" style="flex:0 0 auto">
+              <option value="waiter">Waiter</option>
+              <option value="kitchen">Kitchen</option>
+              <option value="billing">Billing</option>
+            </select>
+            <button class="btn primary" data-action="staff-add-member" data-slug="${r.slug}">Add Staff</button>
           </div>
-          <p class="muted small" style="margin:6px 0 0">
-            ${r.masterKeyHash
-              ? `✅ A master key is already set. Leave blank to keep the existing key, or generate/type a new one to replace it.`
-              : `⚠ No master key set yet. Set one before sharing the staff dashboard link.`}
-          </p>
-          <p class="muted small" style="margin:4px 0 0">The key is stored as a one-way hash — even you cannot read it back. Anyone with it can access Kitchen, Floor Plan, and Billing panels.</p>
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
-          <button class="btn primary" data-action="save-settings" data-slug="${r.slug}">Save Key</button>
-          <a href="#/staff?resto=${r.slug}" class="btn">🛎 Open Staff Dashboard</a>
-        </div>
+          <div id="staff-list-wrap">
+            ${staffMembersList(r.slug)}
+          </div>
+        ` : `<p class="muted small">Staff management requires Firebase to be configured.</p>`}
       </section>
 
       <section class="card" style="max-width:640px;margin-top:14px;border:1.5px solid #f5c6c6">
@@ -3945,9 +4022,33 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     // ── Staff Dashboard actions ──────────────────────────────────────
     if (action === "staff-select-role") { staffSelectedRole = el.dataset.role; return render(); }
     if (action === "staff-login") {
+      const loginSlug = el.dataset.slug;
+      if (firebaseMode && auth) {
+        // Firebase Auth login
+        const emailEl = document.getElementById("staff-email-input");
+        const passEl  = document.getElementById("staff-pass-input");
+        const errEl   = document.getElementById("staff-login-err");
+        const email    = (emailEl ? emailEl.value : "").trim();
+        const password = passEl ? passEl.value : "";
+        if (!email || !password) { if (errEl) errEl.textContent = "Please enter email and password."; return; }
+        const btn = document.querySelector("[data-action='staff-login']");
+        if (btn) { btn.textContent = "Signing in…"; btn.disabled = true; }
+        auth.signInWithEmailAndPassword(email, password)
+          .then(() => {
+            // onAuthStateChanged will fire → render() → isStaffUnlocked() will check staff record
+            staffTab = "kitchen";
+            toast("Welcome!");
+          })
+          .catch(e => {
+            if (btn) { btn.textContent = "Sign In"; btn.disabled = false; }
+            const msg = friendlyAuthError(e.code);
+            if (errEl) errEl.textContent = msg; else toast(msg);
+          });
+        return;
+      }
+      // Fallback: master key (non-Firebase mode)
       const input = document.getElementById("staff-key-input");
       const entered = (input ? input.value : "").trim();
-      const loginSlug = el.dataset.slug;
       const resto = bySlug(loginSlug);
       if (!entered) { toast("Please enter the master key"); return; }
       if (!resto || !resto.masterKeyHash) {
@@ -3968,12 +4069,65 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       return;
     }
     if (action === "staff-logout") {
-      localStorage.removeItem(staffKeyFor(el.dataset.slug));
-      localStorage.removeItem("restoqr_staff_role_" + el.dataset.slug);
-      staffSheetTable = null;
-      return render();
+      if (firebaseMode && auth) {
+        auth.signOut().then(() => { staffSheetTable = null; render(); });
+      } else {
+        localStorage.removeItem(staffKeyFor(el.dataset.slug));
+        localStorage.removeItem("restoqr_staff_role_" + el.dataset.slug);
+        staffSheetTable = null;
+        render();
+      }
+      return;
     }
-    if (action === "staff-tab") { staffTab = el.dataset.tab; staffSheetTable = null; return render(); }
+    if (action === "staff-toggle-active") {
+      if (!firebaseMode || !db) return toast("Firebase not available");
+      const { slug, uid: staffUid, active } = el.dataset;
+      const newActive = active !== "1";
+      db.child("staff").child(slug).child(staffUid).update({ active: newActive })
+        .then(() => toast(newActive ? "Staff reactivated." : "Staff deactivated."))
+        .catch(() => toast("Failed to update staff status."));
+      return;
+    }
+    if (action === "staff-add-member") {
+      if (!firebaseMode || !auth || !db) return toast("Firebase not available");
+      const slug      = el.dataset.slug;
+      const name      = (document.getElementById("staff-add-name")?.value  || "").trim();
+      const email     = (document.getElementById("staff-add-email")?.value || "").trim();
+      const password  = (document.getElementById("staff-add-pass")?.value  || "").trim();
+      const role      = document.getElementById("staff-add-role")?.value || "waiter";
+      if (!name)     return toast("Enter staff name");
+      if (!email)    return toast("Enter staff email");
+      if (password.length < 6) return toast("Password must be at least 6 characters");
+      el.textContent = "Adding…"; el.disabled = true;
+      // Use a secondary Firebase app so creating staff doesn't sign out the owner
+      let secondaryApp;
+      try {
+        secondaryApp = firebase.app("staffCreator");
+      } catch(e) {
+        secondaryApp = firebase.initializeApp(window.FIREBASE_CONFIG, "staffCreator");
+      }
+      const secondaryAuth = secondaryApp.auth();
+      secondaryAuth.createUserWithEmailAndPassword(email, password)
+        .then(credential => {
+          const staffUid = credential.user.uid;
+          return db.child("staff").child(slug).child(staffUid).set({
+            name, email, role, active: true, createdAt: Date.now()
+          }).then(() => secondaryAuth.signOut());
+        })
+        .then(() => {
+          toast(`${name} added as ${role}!`);
+          ["staff-add-name","staff-add-email","staff-add-pass"].forEach(id => {
+            const el = document.getElementById(id); if (el) el.value = "";
+          });
+          el.textContent = "Add Staff"; el.disabled = false;
+          render();
+        })
+        .catch(e => {
+          el.textContent = "Add Staff"; el.disabled = false;
+          toast(friendlyAuthError(e.code));
+        });
+      return;
+    }
     if (action === "staff-open-table") { staffSheetTable = Number(el.dataset.table); return render(); }
     if (action === "staff-close-sheet") { staffSheetTable = null; return render(); }
     if (action === "staff-dismiss-waiter") {
@@ -3987,7 +4141,13 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     }
     if (action === "staff-confirm-upi") {
       const ids = el.dataset.ids.split(",").filter(Boolean);
-      mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o) { o.paymentStatus = "paid"; o.status = "pending"; } }));
+      const staffInfo = firebaseMode && currentUser ? {
+        uid: currentUser.uid, name: currentStaffName(el.dataset.slug || ""), at: Date.now()
+      } : null;
+      mutate(s => ids.forEach(id => {
+        const o = s.orders.find(x => x.id === id);
+        if (o) { o.paymentStatus = "paid"; o.status = "pending"; if (staffInfo) o.upiConfirmedBy = staffInfo; }
+      }));
       return toast("✅ UPI payment confirmed");
     }
     if (action === "staff-send-cash-kitchen") {
@@ -3997,12 +4157,24 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     }
     if (action === "staff-confirm-cash") {
       const ids = el.dataset.ids.split(",").filter(Boolean);
-      mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o && o.paymentStatus === "cash_sent") o.paymentStatus = "cash_accepted"; }));
+      const staffInfo = firebaseMode && currentUser ? {
+        uid: currentUser.uid, name: currentStaffName(el.dataset.slug || ""), at: Date.now()
+      } : null;
+      mutate(s => ids.forEach(id => {
+        const o = s.orders.find(x => x.id === id);
+        if (o && o.paymentStatus === "cash_sent") { o.paymentStatus = "cash_accepted"; if (staffInfo) o.cashConfirmedBy = staffInfo; }
+      }));
       return toast("💵 Cash received");
     }
     if (action === "staff-close-table") {
       const ids = el.dataset.ids.split(",").filter(Boolean);
-      mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o) o.status = "completed"; }));
+      const staffInfo = firebaseMode && currentUser ? {
+        uid: currentUser.uid, name: currentStaffName(el.dataset.slug || ""), at: Date.now()
+      } : null;
+      mutate(s => ids.forEach(id => {
+        const o = s.orders.find(x => x.id === id);
+        if (o) { o.status = "completed"; if (staffInfo) o.closedBy = staffInfo; }
+      }));
       staffSheetTable = null;
       return toast("🔒 Table closed");
     }

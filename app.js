@@ -2833,7 +2833,6 @@
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
             <span class="spill ${statusLabel.cls}">${statusLabel.text}</span>
-            <button class="sbtn plain" style="flex:none;padding:7px 12px;font-size:12px" data-action="staff-close-sheet">✕</button>
           </div>
         </div>
 

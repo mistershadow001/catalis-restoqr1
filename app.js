@@ -286,7 +286,8 @@
         if (billingArchiveListening) return;
         billingArchiveListening = true;
         db.child("billingArchive").on("value", snap => {
-          state.billingArchive = snap.val() || [];
+          const raw = snap.val();
+          state.billingArchive = (raw && typeof raw === "object" && !Array.isArray(raw)) ? Object.values(raw).filter(Boolean) : (Array.isArray(raw) ? raw : []);
           render();
         });
       }
@@ -332,7 +333,8 @@
       });
 
       db.child("orders").on("value", snap => {
-        const orders = snap.val() || [];
+        const raw = snap.val();
+        const orders = (raw && typeof raw === "object" && !Array.isArray(raw)) ? Object.values(raw).filter(Boolean) : (Array.isArray(raw) ? raw : []);
         const nextState = { ...state, orders };
         checkNewOrders(nextState);
         state.orders = orders;
@@ -344,7 +346,8 @@
       });
 
       db.child("feedbacks").on("value", snap => {
-        state.feedbacks = snap.val() || [];
+        const raw = snap.val();
+        state.feedbacks = (raw && typeof raw === "object" && !Array.isArray(raw)) ? Object.values(raw).filter(Boolean) : (Array.isArray(raw) ? raw : []);
         render();
       });
 
@@ -578,6 +581,12 @@
   function syncArrayNode(path, prevArr, nextArr) {
     prevArr = prevArr || [];
     nextArr = nextArr || [];
+    // If no previous data, always do a direct set — transactions on non-existent
+    // or false-initialized nodes silently abort in Firebase Realtime Database.
+    if (prevArr.length === 0) {
+      db.child(path).set(nextArr);
+      return;
+    }
     const appendOnly = nextArr.length === prevArr.length + 1 && prevArr.every((item, i) => {
       const after = nextArr[i] || {};
       return (item.id && item.id === after.id) || (item.slug && item.slug === after.slug);
@@ -585,11 +594,11 @@
     if (appendOnly) {
       const item = nextArr[nextArr.length - 1];
       db.child(path).transaction(arr => {
-        arr = arr || [];
+        const base = (arr && typeof arr === "object" && !Array.isArray(arr)) ? Object.values(arr).filter(Boolean) : (Array.isArray(arr) ? arr : []);
         const key = item.id ? "id" : item.slug ? "slug" : "";
-        if (key && arr.some(x => x && x[key] === item[key])) return arr;
-        arr.push(item);
-        return arr;
+        if (key && base.some(x => x && x[key] === item[key])) return base;
+        base.push(item);
+        return base;
       });
       return;
     }
@@ -4031,8 +4040,8 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       .filter(Boolean);
     const newItems = Object.entries(cart).map(([id, qty]) => {
       const m = find(r.menu, id);
-      return { id, name: m.name, price: m.price, qty };
-    });
+      return m ? { id, name: m.name, price: m.price, qty } : null;
+    }).filter(Boolean);
     if (!newItems.length && !pickedAddons.length) return toast("Cart is empty");
 
     // Merge into existing open order for this table if one exists
@@ -4093,8 +4102,8 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       .filter(Boolean);
     const newItems = Object.entries(cart).map(([id, qty]) => {
       const m = find(r.menu, id);
-      return { id, name: m.name, price: m.price, qty };
-    });
+      return m ? { id, name: m.name, price: m.price, qty } : null;
+    }).filter(Boolean);
     if (!newItems.length && !pickedAddons.length) return toast("Cart is empty");
 
     // Merge into existing open order for this table if one exists

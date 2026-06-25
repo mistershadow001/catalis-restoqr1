@@ -369,10 +369,11 @@
         if (restaurants) {
           state.restaurants = normalizeState({ restaurants }).restaurants;
         } else if (!firebaseDataLoaded && currentUser) {
+          // Write seed data per-index so $index rules are satisfied.
+          // Parent-level .set() is blocked because there is no parent .write rule.
           const s = seed();
-          db.child("restaurants").set(s.restaurants);
-          db.child("orders").set(s.orders);
-          db.child("feedbacks").set(s.feedbacks);
+          s.restaurants.forEach((r, i) => db.child("restaurants").child(String(i)).set(r));
+          // orders and feedbacks are empty arrays in seed — nothing to write
           db.child("billingArchive").set(s.billingArchive);
         }
         markFirebaseLoaded();
@@ -386,7 +387,8 @@
         checkNewOrders(nextState);
         state.orders = orders;
         if (archiveOldOrders(state)) {
-          db.child("orders").set(state.orders || []);
+          // Write each order to its own $index — parent .set() is blocked by rules.
+          (state.orders || []).forEach((o, i) => db.child("orders").child(String(i)).set(o));
           db.child("billingArchive").set(state.billingArchive || []);
         }
         render();
@@ -411,7 +413,8 @@
     setInterval(() => {
       if (!archiveOldOrders(state)) return;
       if (firebaseMode && db) {
-        db.child("orders").set(state.orders || []);
+        // Per-index writes — parent .set() blocked by rules.
+        (state.orders || []).forEach((o, i) => db.child("orders").child(String(i)).set(o));
         db.child("billingArchive").set(state.billingArchive || []);
       }
       render();
@@ -629,10 +632,10 @@
   function syncArrayNode(path, prevArr, nextArr) {
     prevArr = prevArr || [];
     nextArr = nextArr || [];
-    // If no previous data, always do a direct set — transactions on non-existent
-    // or false-initialized nodes silently abort in Firebase Realtime Database.
+    // When prevArr is empty write each item to its own $index.
+    // Parent-level .set() is blocked because there is no parent .write rule.
     if (prevArr.length === 0) {
-      db.child(path).set(nextArr);
+      nextArr.forEach((item, i) => db.child(path).child(String(i)).set(item));
       return;
     }
     const appendOnly = nextArr.length === prevArr.length + 1 && prevArr.every((item, i) => {
@@ -640,13 +643,18 @@
       return (item.id && item.id === after.id) || (item.slug && item.slug === after.slug);
     });
     if (appendOnly) {
+      // Write directly to the next numeric index instead of a transaction on the
+      // parent node. Firebase rules only define .write at $index level — a
+      // transaction on the parent is denied because there is no parent .write rule.
       const item = nextArr[nextArr.length - 1];
-      db.child(path).transaction(arr => {
-        const base = (arr && typeof arr === "object" && !Array.isArray(arr)) ? Object.values(arr).filter(Boolean) : (Array.isArray(arr) ? arr : []);
+      db.child(path).once("value").then(snap => {
+        const current = snap.val();
+        const base = (current && typeof current === "object" && !Array.isArray(current))
+          ? Object.values(current).filter(Boolean)
+          : (Array.isArray(current) ? current : []);
         const key = item.id ? "id" : item.slug ? "slug" : "";
-        if (key && base.some(x => x && x[key] === item[key])) return base;
-        base.push(item);
-        return base;
+        if (key && base.some(x => x && x[key] === item[key])) return; // duplicate guard
+        db.child(path).child(String(base.length)).set(item);
       });
       return;
     }
@@ -655,7 +663,14 @@
       return (item.id && item.id === before.id) || (item.slug && item.slug === before.slug);
     });
     if (!sameShape) {
-      db.child(path).set(nextArr);
+      // Shape changed (deletions or reorders) — write per-index.
+      // Parent-level .set() is blocked because there is no parent .write rule.
+      nextArr.forEach((item, i) => db.child(path).child(String(i)).set(item));
+      // Remove stale indexes beyond the new length — without this, deleted items
+      // remain in Firebase and get read back on the next listener fire.
+      for (let i = nextArr.length; i < prevArr.length; i++) {
+        db.child(path).child(String(i)).remove();
+      }
       return;
     }
     nextArr.forEach((item, i) => {
@@ -3516,6 +3531,11 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     }
     const slug = params.get("resto") || (state.restaurants[0]?.slug || "");
     const r = bySlug(slug);
+    // If Firebase hasn't finished loading yet, show a loading screen instead of
+    // "not found" — state.restaurants may still be empty on first render.
+    if (!r && firebaseMode && !firebaseDataLoaded) {
+      return customerShell("Loading\u2026", `<div class="empty" style="padding:40px 0"><p style="font-size:15px;color:#9a8878">Loading menu, please wait\u2026</p></div>`);
+    }
     if (!r) return customerShell("Restaurant unavailable", `<div class="empty">Restaurant not found.</div>`);
     if (!isRestaurantOpen(r)) {
       return customerShell(r.name, `<div class="empty">Ordering is currently unavailable. Please contact the counter.</div>`);

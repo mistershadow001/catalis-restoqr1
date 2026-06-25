@@ -272,6 +272,8 @@
     firebaseMode = canUseFirebase();
     if (firebaseMode) {
       firebase.initializeApp(window.FIREBASE_CONFIG);
+      const appCheck = firebase.appCheck();
+      appCheck.activate("6LcjxjMtAAAAAK4rgarGJGd9_JhEI4FZPHzts1Si", true);
       auth = firebase.auth();
       db   = firebase.database().ref("restoqr");
 

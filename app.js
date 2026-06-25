@@ -3984,8 +3984,19 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (action === "auth-signout") return authSignOut();
     if (action === "register") return registerRestaurant();
     if (action === "delete-resto") {
-      if (!confirm("Delete " + (bySlug(el.dataset.slug)?.name || "this restaurant") + "? This cannot be undone.")) return;
-      return mutate(s => { s.restaurants = s.restaurants.filter(r => r.slug !== el.dataset.slug); });
+      const slug = el.dataset.slug;
+      if (!confirm("Delete " + (bySlug(slug)?.name || "this restaurant") + "? This cannot be undone.")) return;
+      mutate(s => {
+        s.restaurants    = s.restaurants.filter(r => r.slug !== slug);
+        s.orders         = s.orders.filter(o => o.restaurantSlug !== slug);
+        s.feedbacks      = s.feedbacks.filter(f => f.restaurantSlug !== slug);
+        s.billingArchive = (s.billingArchive || []).filter(a => a.restaurantSlug !== slug);
+      });
+      if (firebaseMode && db) {
+        db.child("ownerIndex").child(slug).remove();
+        db.child("staff").child(slug).remove();
+      }
+      return;
     }
     if (action === "toggle-active") return updateRestaurant(el.dataset.slug, r => r.active = !r.active);
     if (action === "toggle-qr") return updateRestaurant(el.dataset.slug, r => r.qrEnabled = !r.qrEnabled);

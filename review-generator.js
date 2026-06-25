@@ -142,104 +142,6 @@
   }
 
   function start() {
-    // ── Inject home-page section styles once into <head> ──────────
-    (function() {
-      if (document.getElementById("rqr-home-styles")) return;
-      const s = document.createElement("style");
-      s.id = "rqr-home-styles";
-      s.textContent = `
-        /* AI REVIEW BANNER */
-        .ai-review-banner{padding:72px 24px;background:linear-gradient(135deg,#0f172a 0%,#1e1060 50%,#3b0764 100%);position:relative;overflow:hidden}
-        .ai-review-banner-inner{max-width:1100px;margin:0 auto;display:flex;gap:48px;align-items:center;flex-wrap:wrap}
-        .ai-review-banner-left{flex:1;min-width:280px;color:#fff}
-        .ai-review-label{display:inline-block;background:rgba(255,200,50,.15);color:#fcd34d;font-size:12px;font-weight:800;padding:5px 16px;border-radius:99px;margin-bottom:18px;letter-spacing:.06em;text-transform:uppercase;border:1px solid rgba(252,211,77,.25)}
-        .ai-review-title{font-size:clamp(22px,3.5vw,38px);font-weight:900;line-height:1.2;margin:0 0 16px;color:#fff}
-        .ai-review-sub{font-size:15px;color:#c4b5e0;line-height:1.65;margin:0 0 28px;max-width:520px}
-        .ai-review-steps{display:flex;flex-direction:column;gap:12px;margin-bottom:32px}
-        .ai-review-step{display:flex;align-items:center;gap:14px;font-size:14px;color:#e2e8f0;font-weight:500}
-        .ai-review-step-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;font-size:13px;font-weight:900;display:flex;align-items:center;justify-content:center}
-        .ai-review-stats{display:flex;gap:24px;flex-wrap:wrap}
-        .ai-review-stat{text-align:center}
-        .ai-review-stat strong{display:block;font-size:28px;font-weight:900;color:#fcd34d;line-height:1}
-        .ai-review-stat span{font-size:12px;color:#a78bfa;font-weight:600;margin-top:4px;display:block}
-        .ai-review-banner-right{flex-shrink:0;display:flex;justify-content:center}
-        .ai-review-phone-mock{width:240px;background:#1e1b2e;border-radius:28px;padding:20px 16px;border:2px solid rgba(255,255,255,.12);box-shadow:0 24px 60px rgba(0,0,0,.5)}
-        .ai-review-phone-screen{display:flex;flex-direction:column;gap:12px}
-        .ai-review-phone-header{font-size:13px;font-weight:700;color:#e2e8f0;text-align:center;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08)}
-        .ai-review-stars{text-align:center;font-size:20px;letter-spacing:2px}
-        .ai-review-phone-bubble{background:rgba(255,255,255,.07);border-radius:14px;padding:12px 14px;border:1px solid rgba(255,255,255,.1)}
-        .ai-review-bubble-label{font-size:10px;font-weight:800;color:#a78bfa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
-        .ai-review-phone-bubble p{margin:0;font-size:12px;color:#e2e8f0;line-height:1.55}
-        .ai-review-phone-cta{text-align:center}
-        .ai-review-google-btn{background:linear-gradient(135deg,#4285f4,#34a853);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-size:12px;font-weight:800;cursor:pointer;width:100%}
-        @media(max-width:680px){.ai-review-banner-right{width:100%;order:-1}.ai-review-phone-mock{width:200px}}
-        /* WHY RESTOQR */
-        .why-restoqr-section{padding:72px 20px;background:#fffdf9}
-        .why-restoqr-inner{max-width:1100px;margin:0 auto}
-        .why-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}
-        .why-card{border-radius:18px;padding:28px 24px;position:relative;overflow:hidden}
-        .why-card-orange{background:linear-gradient(135deg,#fff7ed,#ffece0);border:1.5px solid #ffd0b0}
-        .why-card-purple{background:linear-gradient(135deg,#f5f0ff,#ede5ff);border:1.5px solid #d0b8ff}
-        .why-card-green{background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:1.5px solid #6ee7b7}
-        .why-card-blue{background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1.5px solid #93c5fd}
-        .why-card-icon{font-size:34px;margin-bottom:12px}
-        .why-card h3{margin:0 0 8px;font-size:18px;font-weight:800;color:#1c0e04}
-        .why-card p{margin:0;font-size:14px;color:#4b5563;line-height:1.55}
-        .why-compare-tag{display:inline-block;margin-top:14px;background:rgba(255,107,0,.12);color:#c24a00;font-size:11px;font-weight:800;padding:4px 12px;border-radius:99px;text-transform:uppercase;letter-spacing:.04em}
-        /* COMPARISON TABLE */
-        .comparison-section{padding:72px 20px;background:#f9f6f1}
-        .comparison-inner{max-width:900px;margin:0 auto}
-        .comparison-table-wrap{overflow-x:auto}
-        .comparison-table{width:100%;border-collapse:separate;border-spacing:0;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 4px 20px rgba(0,0,0,.07)}
-        .comparison-table th,.comparison-table td{padding:14px 18px;text-align:center;font-size:14px;border-bottom:1px solid #f0ede8}
-        .comparison-table th{background:#1c0e04;color:#fff;font-weight:700;font-size:13px}
-        .comparison-table .col-us{background:#fff7ed;font-weight:700;color:#c24a00}
-        .comparison-table tbody tr:last-child td{border-bottom:none}
-        .comparison-table tbody tr:hover{background:#fffbf5}
-        /* AI HIGHLIGHT */
-        .ai-highlight-section{padding:72px 20px;background:linear-gradient(135deg,#1a0a3e,#2d1060)}
-        .ai-highlight-inner{max-width:800px;margin:0 auto;text-align:center;color:#fff}
-        .ai-highlight-badge{display:inline-block;background:rgba(255,255,255,.15);color:#e0d0ff;font-size:12px;font-weight:800;padding:5px 16px;border-radius:99px;margin-bottom:20px;letter-spacing:.05em;text-transform:uppercase}
-        .ai-highlight-inner h2{font-size:clamp(22px,3.5vw,36px);margin:0 0 14px;color:#fff}
-        .ai-highlight-inner p{color:#c4b5e0;font-size:16px;line-height:1.6;margin-bottom:32px}
-        .ai-queries-grid{display:flex;flex-wrap:wrap;gap:12px;justify-content:center}
-        .ai-query-chip{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:13px;font-weight:600;padding:10px 18px;border-radius:99px}
-        /* PRICING */
-        .pricing-section{padding:72px 20px;background:#f9f6f1}
-        .pricing-inner{max-width:500px;margin:0 auto}
-        .pricing-cards-row{display:flex;justify-content:center}
-        .pricing-card{background:#fff;border-radius:20px;padding:36px 32px;border:2px solid #f0ede8;width:100%;position:relative}
-        .pricing-card-highlight{border-color:#ff6b00;box-shadow:0 12px 40px rgba(255,107,0,.15)}
-        .pricing-badge{position:absolute;top:-14px;left:50%;transform:translateX(-50%);background:#ff6b00;color:#fff;font-size:11px;font-weight:800;padding:5px 16px;border-radius:99px;white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}
-        .pricing-amount{font-size:48px;font-weight:900;color:#1c0e04;text-align:center}
-        .pricing-amount span{font-size:20px;font-weight:500;color:#9ca3af}
-        .pricing-name{text-align:center;font-size:15px;font-weight:700;color:#6b7280;margin:6px 0 24px}
-        .pricing-features{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
-        .pricing-features li{font-size:14px;color:#1c0e04;font-weight:500}
-        /* AI REVIEW FEATURE CARD */
-        .ai-review-feature-card{margin-top:24px;display:flex;gap:20px;align-items:flex-start;background:linear-gradient(135deg,#fffbeb,#fef3c7);border:2px solid #fcd34d;border-radius:20px;padding:28px;box-shadow:0 8px 24px rgba(234,179,8,.15)}
-        .ai-review-feature-icon{flex-shrink:0;width:48px;height:48px;background:linear-gradient(135deg,#f59e0b,#ef4444);border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff}
-        .ai-review-feature-body{flex:1}
-        .ai-review-feature-badge{display:inline-block;background:rgba(234,179,8,.2);color:#92400e;font-size:11px;font-weight:800;padding:3px 12px;border-radius:99px;margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase}
-        .ai-review-feature-body h3{margin:0 0 8px;font-size:18px;font-weight:800;color:#1c0e04}
-        .ai-review-feature-body p{margin:0 0 16px;font-size:14px;color:#4b5563;line-height:1.6}
-        .ai-review-feature-pills{display:flex;flex-wrap:wrap;gap:8px}
-        .ai-review-feature-pills span{background:#fff;border:1.5px solid #fcd34d;color:#92400e;font-size:12px;font-weight:700;padding:5px 14px;border-radius:99px}
-        @media(max-width:560px){.ai-review-feature-card{flex-direction:column}.ai-review-feature-icon{width:40px;height:40px}}
-        /* MAHARASHTRA BANNER */
-        .maha-banner{position:relative;overflow:hidden;padding:72px 24px;background:linear-gradient(120deg,#1c0e04 0%,#7a1e00 50%,#c24a00 100%);text-align:center}
-        .maha-banner-bg-text{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(80px,18vw,200px);font-weight:900;color:rgba(255,255,255,.04);pointer-events:none;user-select:none;letter-spacing:-.02em;white-space:nowrap}
-        .maha-banner-inner{position:relative;z-index:2;max-width:720px;margin:0 auto}
-        .maha-banner-flag{font-size:22px;letter-spacing:6px;margin-bottom:18px;opacity:.85}
-        .maha-banner-title{font-size:clamp(24px,4vw,42px);font-weight:900;color:#fff;margin:0 0 16px;line-height:1.2}
-        .maha-banner-sub{font-size:clamp(15px,2vw,18px);color:#ffd0b0;margin:0 0 32px;line-height:1.6}
-        .maha-banner-cta{font-size:16px;padding:14px 32px;border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.3)}
-        @media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr)}}
-        @media(max-width:560px){.grid-4{grid-template-columns:1fr}.why-grid{grid-template-columns:1fr}}
-      `;
-      document.head.appendChild(s);
-    })();
-
     // Load review generator module
     (function() {
       if (!document.getElementById("rqr-review-gen-script")) {
@@ -423,13 +325,13 @@
   // human-readable text passage plus the handful of numbers needed to keep
   // totals accurate; safe to call repeatedly — merges into the same month's
   // entry instead of duplicating it. Returns true if anything was archived.
-  function monthLabel(month) {
+  function archiveMonthLabel(month) {
     return new Date(month + "-01T00:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" });
   }
 
   function buildArchiveSummaryText(entry) {
     const grand = entry.upiTotal + entry.cashTotal;
-    return `${monthLabel(entry.month)}: ${entry.totalOrders} orders closed, ₹${grand.toLocaleString("en-IN")} collected total `
+    return `${archiveMonthLabel(entry.month)}: ${entry.totalOrders} orders closed, ₹${grand.toLocaleString("en-IN")} collected total `
       + `(UPI ${entry.upiOrders} orders · ₹${entry.upiTotal.toLocaleString("en-IN")}, Cash ${entry.cashOrders} orders · ₹${entry.cashTotal.toLocaleString("en-IN")}).`;
   }
 
@@ -597,8 +499,7 @@
       scan: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>`,
       orders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3.5h6a1 1 0 0 1 1 1V6H8V4.5a1 1 0 0 1 1-1Z"/><path d="m8.5 12 2 2 4-4.5"/><path d="M8 17h8"/></svg>`,
       growth: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M4 19h16"/><path d="M7 19v-5"/><path d="M12 19V8"/><path d="M17 19v-9"/><path d="m14 5 3-2 3 2"/><path d="M17 3v4"/></svg>`,
-      customize: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87 2 2 0 1 1-2.83 2.83 1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.55V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.87.34 2 2 0 1 1-2.83-2.83 1.7 1.7 0 0 0 .34-1.87A1.7 1.7 0 0 0 4.1 13.5H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.87 2 2 0 1 1 2.83-2.83 1.7 1.7 0 0 0 1.87.34H10a1.7 1.7 0 0 0 1.03-1.55V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.87-.34 2 2 0 1 1 2.83 2.83 1.7 1.7 0 0 0-.34 1.87V10c.14.62.58 1.13 1.1 1.4"/></svg>`,
-      review: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`
+      customize: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87 2 2 0 1 1-2.83 2.83 1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.55V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.87.34 2 2 0 1 1-2.83-2.83 1.7 1.7 0 0 0 .34-1.87A1.7 1.7 0 0 0 4.1 13.5H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.87 2 2 0 1 1 2.83-2.83 1.7 1.7 0 0 0 1.87.34H10a1.7 1.7 0 0 0 1.03-1.55V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1.03 1.55 1.7 1.7 0 0 0 1.87-.34 2 2 0 1 1 2.83 2.83 1.7 1.7 0 0 0-.34 1.87V10c.14.62.58 1.13 1.1 1.4"/></svg>`
     };
     return icons[name] || "";
   }
@@ -690,55 +591,6 @@
         </div>
       </main>
 
-      <!-- ✅ AI REVIEW ASSISTANT BANNER -->
-      <section class="ai-review-banner">
-        <div class="ai-review-banner-inner">
-          <div class="ai-review-banner-left">
-            <div class="ai-review-label">⭐ ${isMr ? "AI रिव्ह्यू असिस्टंट" : "AI Review Assistant"}</div>
-            <h2 class="ai-review-title">${isMr ? "जेवण झाले? AI रिव्ह्यू एका क्लिकमध्ये!" : "Meal Done? Get a Google Review in One Tap!"}</h2>
-            <p class="ai-review-sub">${isMr ? "ग्राहक जेवणानंतर rating देतो — AI त्याच्या भाषेत छान review तयार करतो. ग्राहक Google वर paste करतो — तुमची rating वाढते, demand वाढते!" : "After every meal, customers rate their experience. Our AI instantly crafts a personalised review in their words. One tap to Google — and your restaurant's reputation soars."}</p>
-            <div class="ai-review-steps">
-              <div class="ai-review-step">
-                <span class="ai-review-step-num">1</span>
-                <span>${isMr ? "ग्राहक QR scan करून rating देतो" : "Customer scans QR &amp; rates experience"}</span>
-              </div>
-              <div class="ai-review-step">
-                <span class="ai-review-step-num">2</span>
-                <span>${isMr ? "AI त्यांच्यासाठी personalized review तयार करतो" : "AI generates a personalised review for them"}</span>
-              </div>
-              <div class="ai-review-step">
-                <span class="ai-review-step-num">3</span>
-                <span>${isMr ? "ग्राहक एका tap मध्ये Google वर post करतो" : "Customer posts it to Google in one tap"}</span>
-              </div>
-              <div class="ai-review-step">
-                <span class="ai-review-step-num">4</span>
-                <span>${isMr ? "तुमची rating वाढते, नवे ग्राहक येतात!" : "Your rating climbs — new customers discover you!"}</span>
-              </div>
-            </div>
-            <div class="ai-review-stats">
-              <div class="ai-review-stat"><strong>3×</strong><span>${isMr ? "जास्त reviews" : "More Reviews"}</span></div>
-              <div class="ai-review-stat"><strong>4.8★</strong><span>${isMr ? "सरासरी rating" : "Avg Rating"}</span></div>
-              <div class="ai-review-stat"><strong>60%</strong><span>${isMr ? "जास्त नवे ग्राहक" : "More Footfall"}</span></div>
-            </div>
-          </div>
-          <div class="ai-review-banner-right">
-            <div class="ai-review-phone-mock">
-              <div class="ai-review-phone-screen">
-                <div class="ai-review-phone-header">⭐ ${isMr ? "तुमचा अनुभव कसा होता?" : "How was your experience?"}</div>
-                <div class="ai-review-stars">⭐⭐⭐⭐⭐</div>
-                <div class="ai-review-phone-bubble">
-                  <div class="ai-review-bubble-label">🤖 ${isMr ? "AI ने तयार केलेला review" : "AI-generated review"}</div>
-                  <p>${isMr ? "\"Catalis Cafe मध्ये जेवण खूप छान होतं! Paneer Tikka एकदम मस्त आणि service जलद होती. नक्की परत येणार! 🍽️\"" : "\"Catalis Cafe was amazing! The Paneer Tikka was perfectly spiced and the service was lightning fast. Highly recommend — will definitely be back! 🍽️\""}</p>
-                </div>
-                <div class="ai-review-phone-cta">
-                  <button class="ai-review-google-btn">🔍 ${isMr ? "Google वर Post करा" : "Post on Google"}</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <!-- ✅ WHY RESTOQR BANNER -->
       <section class="why-restoqr-section">
         <div class="why-restoqr-inner">
@@ -770,16 +622,6 @@
               <p>${isMr ? "नवीन order येताच आवाज येतो. स्वयंपाकघर, वेटर आणि काउंटर सगळे एकाच वेळी अपडेट!" : "Audio alerts on new orders. Kitchen, floor staff, and billing all in sync — no shouting across the room."}</p>
               <div class="why-compare-tag">${isMr ? "लाइव्ह अपडेट" : "Live updates"}</div>
             </div>
-            <div class="why-card" style="background:linear-gradient(135deg,#fff8e1,#fef3c7);border:1.5px solid #fcd34d;grid-column:1/-1">
-              <div style="display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap">
-                <div style="font-size:34px">⭐</div>
-                <div style="flex:1;min-width:200px">
-                  <h3 style="margin:0 0 8px">${isMr ? "AI Google Review असिस्टंट — Demand वाढवा!" : "AI Google Review Assistant — Boost Your Demand!"}</h3>
-                  <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.55">${isMr ? "जेवण झाल्यावर ग्राहक rating देतो. AI लगेच personalized review तयार करतो. ग्राहक Google वर एका tap मध्ये post करतो — तुमची rating वाढते, नवे ग्राहक येतात, sales वाढते!" : "After every meal, customers rate their experience. Our AI instantly crafts a personalised review in their own words — they post it to Google in one tap. More reviews = higher ranking = more customers walking through your door."}</p>
-                </div>
-                <div class="why-compare-tag" style="background:rgba(234,179,8,.15);color:#92400e;align-self:center;white-space:nowrap">${isMr ? "3× जास्त reviews" : "3× More Reviews"}</div>
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -802,7 +644,6 @@
               <tbody>
                 <tr><td>${isMr ? "मासिक किंमत" : "Monthly Price"}</td><td class="col-us">₹999</td><td>₹3,500+</td><td>₹5,000+</td></tr>
                 <tr><td>${isMr ? "AI सहाय्यक" : "AI Assistant"}</td><td class="col-us">✅ ${isMr ? "फ्री" : "Free"}</td><td>❌</td><td>❌</td></tr>
-                <tr><td>${isMr ? "AI Google Review" : "AI Review Generator"}</td><td class="col-us">✅ ${isMr ? "ऑटो-generate" : "Auto-Generate"}</td><td>❌</td><td>❌</td></tr>
                 <tr><td>${isMr ? "QR ऑर्डरिंग" : "QR Table Ordering"}</td><td class="col-us">✅</td><td>✅</td><td>✅</td></tr>
                 <tr><td>${isMr ? "App Install लागत नाही" : "No Customer App"}</td><td class="col-us">✅</td><td>❌</td><td>❌</td></tr>
                 <tr><td>${isMr ? "मराठी भाषा" : "Marathi Language"}</td><td class="col-us">✅</td><td>❌</td><td>❌</td></tr>
@@ -838,28 +679,13 @@
           <div class="feature-head">
             <p class="eyebrow center">${isMr ? "तुम्हाला काय मिळते" : "What you get"}</p>
             <h2>${isMr ? "काउंटरला जे हवे ते सगळे — उगाच जास्त नाही." : "Everything a counter needs, nothing it doesn't."}</h2>
-            <p>${isMr ? "टेबल ते बिल — पाच गोष्टी, सगळं कव्हर." : "Five powerful features cover the whole table-to-bill flow."}</p>
+            <p>${isMr ? "टेबल ते बिल — चार गोष्टी, सगळं कव्हर." : "Four moving parts cover the whole table-to-bill flow."}</p>
           </div>
           <div class="grid-4">
             ${featureCard("scan", isMr ? "स्कॅन करा & ऑर्डर द्या" : "Scan & order", isMr ? "प्रत्येक टेबलला एक QR. ग्राहक लाइव्ह मेनू बघून थेट फोनवरून ऑर्डर देतात." : "Each table gets one QR. Customers see the live menu and order straight from their phone.")}
             ${featureCard("orders", isMr ? "प्रत्येक ऑर्डर ट्रॅक करा" : "Track every order", isMr ? "नवीन ऑर्डर रिअल-टाइम येतात, किचनला जातात, पेमेंट काउंटरवर confirm होते." : "Watch new orders land in real time, move them through prep, and confirm payment at the counter.")}
             ${featureCard("growth", isMr ? "परत येणारे ग्राहक" : "Built for repeat visits", isMr ? "प्रत्येक ऑर्डरनंतर रेटिंग घ्या — खूश ग्राहक थेट Google Review वर जातात." : "Collect a rating after every order and route happy customers straight to your Google listing.")}
             ${featureCard("customize", isMr ? "तुमच्या मनासारखे बनवा" : "Make it yours", isMr ? "Categories, add-ons, QR codes — मिनिटांत सेट करा. कोणत्याही designer ची गरज नाही." : "Add categories, add-ons, and table QR codes in minutes — no designer or developer needed.")}
-          </div>
-          <!-- AI Review Feature — Full-width highlight card -->
-          <div class="ai-review-feature-card">
-            <div class="ai-review-feature-icon">${icon("review")}</div>
-            <div class="ai-review-feature-body">
-              <div class="ai-review-feature-badge">⭐ ${isMr ? "नवीन AI फीचर" : "New AI Feature"}</div>
-              <h3>${isMr ? "AI Google Review Generator — Sales & Demand वाढवा" : "AI Google Review Generator — Grow Sales & Demand"}</h3>
-              <p>${isMr ? "जेवणानंतर ग्राहक 1-tap rating देतो. AI त्याच्यासाठी personalized Google review तयार करतो. ग्राहक copy करतो आणि Google वर post करतो — तुमची rating वाढते, नवे ग्राहक येतात, revenue वाढते. इतर कुठल्याही restaurant software मध्ये हे नाही!" : "After every meal, customers give a 1-tap rating. AI instantly writes a personalised Google review for them — they copy and post it in seconds. Your star rating climbs, you rank higher on Google Maps, new customers discover you, and your revenue grows. No other restaurant software does this."}</p>
-              <div class="ai-review-feature-pills">
-                <span>⭐ ${isMr ? "Higher Google Rating" : "Higher Google Rating"}</span>
-                <span>📈 ${isMr ? "जास्त Footfall" : "More Footfall"}</span>
-                <span>💰 ${isMr ? "जास्त Sales" : "More Sales"}</span>
-                <span>🤖 ${isMr ? "पूर्ण AI Automated" : "Fully AI Automated"}</span>
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -947,19 +773,6 @@
                 </ul>
               </div>
 
-              <div class="guide-card" style="--accent:#f59e0b;--accent-pale:#fffbeb">
-                <div class="guide-card-icon">⭐</div>
-                <div class="guide-card-tag">${isMr ? "AI Review Generator" : "AI Review Generator"}</div>
-                <h4>${isMr ? "ग्राहकांना Google Review देणे सोपे करा — Sales वाढवा" : "Make it effortless for customers to leave Google Reviews — Boost Sales"}</h4>
-                <p>${isMr ? "जेवण झाल्यावर ग्राहक rating देतो. AI लगेच त्यांच्यासाठी personalized review लिहितो. ग्राहक paste करतो, Google वर post करतो — तुमची star rating वाढते, नवे ग्राहक येतात!" : "After every meal, the customer rates their experience. Our AI instantly writes a personalised review for them. They paste and post it to Google in seconds — your star rating goes up, your Google Maps rank improves, and new customers walk in."}</p>
-                <ul class="guide-steps">
-                  <li>${isMr ? "ग्राहक order नंतर rating screen वर rating देतो" : "Customer gives a star rating on the post-order screen"}</li>
-                  <li>${isMr ? "AI त्यांच्यासाठी personalized Google review तयार करतो" : "AI generates a personalised Google review for them instantly"}</li>
-                  <li>${isMr ? "ग्राहक review copy करतो आणि Google वर paste करतो" : "Customer copies the review and pastes it on Google"}</li>
-                  <li>${isMr ? "तुमची rating वाढते → नवे ग्राहक → जास्त revenue! 🚀" : "Your rating climbs → more new customers → higher revenue! 🚀"}</li>
-                </ul>
-              </div>
-
             </div>
           </div>
           <div class="guide-dots"></div>
@@ -980,7 +793,6 @@
               <ul class="pricing-features">
                 <li>✅ ${isMr ? "Unlimited QR ऑर्डर" : "Unlimited QR Orders"}</li>
                 <li>✅ ${isMr ? "AI सहाय्यक — फ्री!" : "AI Assistant — Free!"}</li>
-                <li>✅ ${isMr ? "AI Google Review Generator" : "AI Google Review Generator"}</li>
                 <li>✅ ${isMr ? "रिअल-टाइम किचन अलर्ट" : "Real-time Kitchen Alerts"}</li>
                 <li>✅ ${isMr ? "Billing & Analytics" : "Billing & Analytics"}</li>
                 <li>✅ ${isMr ? "Staff Management" : "Staff Management"}</li>
@@ -1015,6 +827,16 @@
         </div>
       </section>
 
+      <style>
+        .maha-banner{position:relative;overflow:hidden;padding:72px 24px;background:linear-gradient(120deg,#1c0e04 0%,#7a1e00 50%,#c24a00 100%);text-align:center}
+        .maha-banner-bg-text{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(80px,18vw,200px);font-weight:900;color:rgba(255,255,255,.04);pointer-events:none;user-select:none;letter-spacing:-.02em;white-space:nowrap}
+        .maha-banner-inner{position:relative;z-index:2;max-width:720px;margin:0 auto}
+        .maha-banner-flag{font-size:22px;letter-spacing:6px;margin-bottom:18px;opacity:.85}
+        .maha-banner-title{font-size:clamp(24px,4vw,42px);font-weight:900;color:#fff;margin:0 0 16px;line-height:1.2}
+        .maha-banner-sub{font-size:clamp(15px,2vw,18px);color:#ffd0b0;margin:0 0 32px;line-height:1.6}
+        .maha-banner-cta{font-size:16px;padding:14px 32px;border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+      </style>
+
       <!-- ✅ FLOATING CUSTOMER SUPPORT BUTTON -->
       <div id="support-btn-wrap" style="position:fixed;bottom:28px;left:24px;z-index:500;display:flex;flex-direction:column;align-items:flex-start;gap:10px">
         <div id="support-popup" style="display:none;background:#fff;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.18);padding:20px 22px;min-width:240px;border:1.5px solid #f0ede8">
@@ -1035,7 +857,51 @@
         </button>
       </div>
 
-  `;
+      <style>
+        /* ===== WHY RESTOQR ===== */
+        .why-restoqr-section{padding:72px 20px;background:#fffdf9}
+        .why-restoqr-inner{max-width:1100px;margin:0 auto}
+        .why-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}
+        .why-card{border-radius:18px;padding:28px 24px;position:relative;overflow:hidden}
+        .why-card-orange{background:linear-gradient(135deg,#fff7ed,#ffece0);border:1.5px solid #ffd0b0}
+        .why-card-purple{background:linear-gradient(135deg,#f5f0ff,#ede5ff);border:1.5px solid #d0b8ff}
+        .why-card-green{background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:1.5px solid #6ee7b7}
+        .why-card-blue{background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1.5px solid #93c5fd}
+        .why-card-icon{font-size:34px;margin-bottom:12px}
+        .why-card h3{margin:0 0 8px;font-size:18px;font-weight:800;color:#1c0e04}
+        .why-card p{margin:0;font-size:14px;color:#4b5563;line-height:1.55}
+        .why-compare-tag{display:inline-block;margin-top:14px;background:rgba(255,107,0,.12);color:#c24a00;font-size:11px;font-weight:800;padding:4px 12px;border-radius:99px;text-transform:uppercase;letter-spacing:.04em}
+        /* ===== COMPARISON TABLE ===== */
+        .comparison-section{padding:72px 20px;background:#f9f6f1}
+        .comparison-inner{max-width:900px;margin:0 auto}
+        .comparison-table-wrap{overflow-x:auto}
+        .comparison-table{width:100%;border-collapse:separate;border-spacing:0;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 4px 20px rgba(0,0,0,.07)}
+        .comparison-table th,.comparison-table td{padding:14px 18px;text-align:center;font-size:14px;border-bottom:1px solid #f0ede8}
+        .comparison-table th{background:#1c0e04;color:#fff;font-weight:700;font-size:13px}
+        .comparison-table .col-us{background:#fff7ed;font-weight:700;color:#c24a00}
+        .comparison-table tbody tr:last-child td{border-bottom:none}
+        .comparison-table tbody tr:hover{background:#fffbf5}
+        /* ===== AI HIGHLIGHT ===== */
+        .ai-highlight-section{padding:72px 20px;background:linear-gradient(135deg,#1a0a3e,#2d1060)}
+        .ai-highlight-inner{max-width:800px;margin:0 auto;text-align:center;color:#fff}
+        .ai-highlight-badge{display:inline-block;background:rgba(255,255,255,.15);color:#e0d0ff;font-size:12px;font-weight:800;padding:5px 16px;border-radius:99px;margin-bottom:20px;letter-spacing:.05em;text-transform:uppercase}
+        .ai-highlight-inner h2{font-size:clamp(22px,3.5vw,36px);margin:0 0 14px;color:#fff}
+        .ai-highlight-inner p{color:#c4b5e0;font-size:16px;line-height:1.6;margin-bottom:32px}
+        .ai-queries-grid{display:flex;flex-wrap:wrap;gap:12px;justify-content:center}
+        .ai-query-chip{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:13px;font-weight:600;padding:10px 18px;border-radius:99px}
+        /* ===== PRICING ===== */
+        .pricing-section{padding:72px 20px;background:#f9f6f1}
+        .pricing-inner{max-width:500px;margin:0 auto}
+        .pricing-cards-row{display:flex;justify-content:center}
+        .pricing-card{background:#fff;border-radius:20px;padding:36px 32px;border:2px solid #f0ede8;width:100%;position:relative}
+        .pricing-card-highlight{border-color:#ff6b00;box-shadow:0 12px 40px rgba(255,107,0,.15)}
+        .pricing-badge{position:absolute;top:-14px;left:50%;transform:translateX(-50%);background:#ff6b00;color:#fff;font-size:11px;font-weight:800;padding:5px 16px;border-radius:99px;white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}
+        .pricing-amount{font-size:48px;font-weight:900;color:#1c0e04;text-align:center}
+        .pricing-amount span{font-size:20px;font-weight:500;color:#9ca3af}
+        .pricing-name{text-align:center;font-size:14px;color:#6b7280;margin-bottom:24px}
+        .pricing-features{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
+        .pricing-features li{font-size:14px;color:#374151;padding:4px 0;border-bottom:1px solid #f9f6f1}
+      </style>`;
   }
 
   function registerView() {
@@ -1781,6 +1647,7 @@
     }
 
     const allOrders = state.orders.filter(o => o.restaurantSlug === r.slug);
+    const archivedMonths = (state.billingArchive || []).filter(a => a.restaurantSlug === r.slug);
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear  = now.getFullYear();
@@ -1788,7 +1655,8 @@
     const selMonth = window._analyticsMonth != null ? window._analyticsMonth : currentMonth;
     const selYear  = window._analyticsYear  != null ? window._analyticsYear  : currentYear;
 
-    // Months dropdown
+    // Months dropdown — live months (from remaining raw orders) + archived
+    // months (raw orders already purged, summary-only available)
     const monthsWithOrders = [];
     const seenM = new Set();
     allOrders.forEach(o => {
@@ -1796,8 +1664,17 @@
       const key = d.getFullYear() + "-" + d.getMonth();
       if (!seenM.has(key)) { seenM.add(key); monthsWithOrders.push({ year: d.getFullYear(), month: d.getMonth() }); }
     });
+    archivedMonths.forEach(a => {
+      const [ay, am] = a.month.split("-").map(Number); // am is 1-indexed
+      const key = ay + "-" + (am - 1);
+      if (!seenM.has(key)) { seenM.add(key); monthsWithOrders.push({ year: ay, month: am - 1 }); }
+    });
     monthsWithOrders.sort((a,b) => b.year - a.year || b.month - a.month);
     if (!monthsWithOrders.length) monthsWithOrders.push({ year: currentYear, month: currentMonth });
+
+    // Archived summary for the selected month, if its raw orders were already purged
+    const selMonthKey = selYear + "-" + String(selMonth + 1).padStart(2, "0");
+    const archivedForSelectedMonth = archivedMonths.find(a => a.month === selMonthKey);
 
     // Filtered orders
     const orders = allOrders.filter(o => {
@@ -1996,12 +1873,24 @@
             ${monthsWithOrders.map(m => {
               const lbl = new Date(m.year,m.month,1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
               const val = m.year+"-"+m.month;
-              return `<option value="${val}" ${m.month===selMonth&&m.year===selYear?"selected":""}>${lbl}</option>`;
+              const isArchivedOnly = !allOrders.some(o => { const d = new Date(o.createdAt); return d.getFullYear() === m.year && d.getMonth() === m.month; });
+              return `<option value="${val}" ${m.month===selMonth&&m.year===selYear?"selected":""}>${lbl}${isArchivedOnly ? " (archived)" : ""}</option>`;
             }).join("")}
           </select>
         </div>
 
-        ${!orders.length ? `<div class="empty">No orders found for ${monthLabel}</div>` : `
+        ${archivedForSelectedMonth && !orders.length ? `
+          <div class="empty" style="margin-bottom:14px">Day-by-day detail, item breakdown, and charts for ${monthLabel} were consolidated into one summary and the raw orders were deleted to save storage. Here's what was kept:</div>
+          <div class="grid-4" style="margin-bottom:18px">
+            ${stat("Total Orders", archivedForSelectedMonth.totalOrders)}
+            ${stat("Revenue", money(archivedForSelectedMonth.upiTotal + archivedForSelectedMonth.cashTotal))}
+            ${stat("UPI", money(archivedForSelectedMonth.upiTotal))}
+            ${stat("Cash", money(archivedForSelectedMonth.cashTotal))}
+          </div>
+          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
+            <p style="margin:0;font-size:13px">${archivedForSelectedMonth.summary}</p>
+          </div>
+        ` : !orders.length ? `<div class="empty">No orders found for ${monthLabel}</div>` : `
 
         <!-- KPIs -->
         <div class="grid-4" style="margin-bottom:18px">
@@ -2968,6 +2857,22 @@
     const upiTotal  = paidOrders.filter(o => o.paymentStatus === "paid").reduce((s, o) => s + o.total, 0);
     const cashTotal = paidOrders.filter(o => o.paymentStatus === "cash_accepted").reduce((s, o) => s + o.total, 0);
 
+    // Orders older than ORDER_RETENTION_DAYS are consolidated into monthly
+    // billingArchive entries and removed from `state.orders` — fold those
+    // back in so "lifetime" figures below don't silently under-report.
+    const archived = (state.billingArchive || []).filter(a => a.restaurantSlug === slug);
+    const archivedTotals = archived.reduce((acc, a) => {
+      acc.totalOrders += a.totalOrders;
+      acc.paidCount += a.upiOrders + a.cashOrders;
+      acc.upiTotal += a.upiTotal;
+      acc.cashTotal += a.cashTotal;
+      return acc;
+    }, { totalOrders: 0, paidCount: 0, upiTotal: 0, cashTotal: 0 });
+    const lifetimeOrders = orders.length + archivedTotals.totalOrders;
+    const lifetimeUpi = upiTotal + archivedTotals.upiTotal;
+    const lifetimeCash = cashTotal + archivedTotals.cashTotal;
+    const lifetimePaidCount = paidOrders.length + archivedTotals.paidCount;
+
     const systemPrompt = `You are RestoAI, a smart restaurant analytics assistant for "${r.name}" owned by ${r.owner} in ${r.city || "India"}.
 
 Restaurant data snapshot (as of ${new Date().toLocaleString("en-IN")}):
@@ -2978,18 +2883,18 @@ Restaurant data snapshot (as of ${new Date().toLocaleString("en-IN")}):
 - Tables: ${r.tableCount || r.tables.length}
 
 Orders summary:
-- Total orders ever: ${orders.length}
-- Paid orders: ${paidOrders.length}
-- Total UPI revenue: ₹${upiTotal.toLocaleString("en-IN")}
-- Total cash revenue: ₹${cashTotal.toLocaleString("en-IN")}
-- Grand total revenue: ₹${(upiTotal + cashTotal).toLocaleString("en-IN")}
+- Total orders ever (lifetime, includes archived history): ${lifetimeOrders}
+- Paid/closed orders (lifetime): ${lifetimePaidCount}
+- Total UPI revenue (lifetime): ₹${lifetimeUpi.toLocaleString("en-IN")}
+- Total cash revenue (lifetime): ₹${lifetimeCash.toLocaleString("en-IN")}
+- Grand total revenue (lifetime): ₹${(lifetimeUpi + lifetimeCash).toLocaleString("en-IN")}
 - Today's orders (${today}): ${todayOrders.length} orders, ₹${todayOrders.reduce((s, o) => s + o.total, 0).toLocaleString("en-IN")}
 - Yesterday's orders (${yesterday}): ${yesterdayOrders.length} orders, ₹${yesterdayOrders.reduce((s, o) => s + o.total, 0).toLocaleString("en-IN")}
-- Top 10 items by qty sold: ${topItems.map(([n, q]) => `${n} (${q})`).join(", ") || "no data"}
-- Peak hour: ${peakHour}:00–${peakHour + 1}:00
-- Average order value: ₹${paidOrders.length ? Math.round((upiTotal + cashTotal) / paidOrders.length) : 0}
+- Top 10 items by qty sold (last ~${ORDER_RETENTION_DAYS} days only — older detail is archived as totals, not item-level): ${topItems.map(([n, q]) => `${n} (${q})`).join(", ") || "no data"}
+- Peak hour (last ~${ORDER_RETENTION_DAYS} days only): ${peakHour}:00–${peakHour + 1}:00
+- Average order value (last ~${ORDER_RETENTION_DAYS} days only): ₹${paidOrders.length ? Math.round((upiTotal + cashTotal) / paidOrders.length) : 0}
 
-Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. If asked for suggestions, give practical advice for a small Indian restaurant.`;
+Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. If asked for suggestions, give practical advice for a small Indian restaurant. If asked about item-level or hourly trends from further back than ~${ORDER_RETENTION_DAYS} days, say that detail isn't retained beyond that window, only monthly totals.`;
 
     _aiMessages.push({ role: "user", content: userMsg });
     _aiLoading = true;
@@ -4011,7 +3916,13 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
 
   function topbar(active, r) {
     const isMarathi = localStorage.getItem("restoqr_lang") === "mr";
-    return `<header class="topbar"><div class="topbar-inner">
+    return `<style>
+      .order-scroll::-webkit-scrollbar { width: 5px; }
+      .order-scroll::-webkit-scrollbar-track { background: transparent; }
+      .order-scroll::-webkit-scrollbar-thumb { background: var(--line,#e5e7eb); border-radius: 99px; }
+      .order-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted,#9ca3af); }
+    </style>
+    <header class="topbar"><div class="topbar-inner">
       <a class="brand" href="#/"><img src="./assets/logo.png" alt="RestoQR" style="height: 60px;"></a>
       <nav class="nav">
         <a class="btn ${active === "home" ? "primary" : ""}" href="#/" title="Home" style="display:inline-flex;align-items:center;padding:8px 10px">

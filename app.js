@@ -489,6 +489,7 @@
     if (normEmail(r.ownerEmail) === email || normEmail(r.ownerEmail)) return;
     r.ownerEmail = email;
     db.child("restaurants").child(String(idx)).child("ownerEmail").set(email);
+    db.child("ownerIndex").child(cachedSlug).set(email);
   }
 
   // Cache for admin status — reset on sign out
@@ -4330,6 +4331,10 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
   function saveSettings(slug) {
     const newMasterKey = val("set-master-key");
     const cleanOwnerEmail = settingsOwnerEmail();
+    // Keep ownerIndex in sync so staff write rules can verify ownership by slug
+    if (firebaseMode && db && cleanOwnerEmail) {
+      db.child("ownerIndex").child(slug).set(cleanOwnerEmail);
+    }
     if (newMasterKey) {
       // Hash first, then save everything together
       hashMasterKey(newMasterKey).then(hash => {

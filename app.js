@@ -4155,6 +4155,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         });
       return;
     }
+    if (action === "staff-tab") { staffTab = el.dataset.tab; staffSheetTable = null; return render(); }
     if (action === "staff-open-table") { staffSheetTable = Number(el.dataset.table); return render(); }
     if (action === "staff-close-sheet") { staffSheetTable = null; return render(); }
     if (action === "staff-dismiss-waiter") {

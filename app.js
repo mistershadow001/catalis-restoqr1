@@ -1920,7 +1920,7 @@
           <div class="row">
             <div>
               <span style="color:#ffba00;font-size:18px">${stars(f.stars)}</span>
-              <p class="muted small" style="margin:4px 0 0">Table ${f.table} · Order #${f.orderId.slice(-5).toUpperCase()} · ${new Date(f.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
+              <p class="muted small" style="margin:4px 0 0">${f.table ? "Table " + f.table + " · " : ""}${f.orderId ? "Order #" + f.orderId.slice(-5).toUpperCase() + " · " : ""}${new Date(f.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
             </div>
             <span class="pill ${f.stars >= 4 ? "ok" : f.stars >= 3 ? "warn" : "bad"}">${f.stars}/5</span>
           </div>

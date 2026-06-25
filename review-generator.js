@@ -352,10 +352,19 @@ Rules:
       const data = await resp.json();
       const raw = (data.choices?.[0]?.message?.content || "").trim();
 
-      const reviews = raw.split("|")
+      // Try pipe separator first, fall back to newline
+      let reviews = raw.split("|")
         .map(r => r.trim().replace(/^["']+|["']+$/g, "").trim())
         .map(r => r.replace(/[.,!?;:'"(){}\[\]]/g, "").replace(/\s+/g, " ").trim())
         .filter(r => r.length > 20);
+
+      // If pipe splitting gave us just 1 big blob, try newlines
+      if (reviews.length <= 2) {
+        reviews = raw.split(/\n+/)
+          .map(r => r.trim().replace(/^\d+[\.\)]\s*/, "").replace(/^["']+|["']+$/g, "").trim())
+          .map(r => r.replace(/[.,!?;:'"(){}\[\]]/g, "").replace(/\s+/g, " ").trim())
+          .filter(r => r.length > 20);
+      }
 
       if (!reviews.length) throw new Error("No reviews returned");
 

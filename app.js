@@ -3847,6 +3847,12 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
   function billCardClosed(o) {
     const isPaid = o.paymentStatus === "paid";
     const isCash = o.paymentStatus === "cash_accepted" || o.paymentStatus === "cash_sent";
+
+    const staffInfo = [];
+    if (o.upiConfirmedBy) staffInfo.push(`✅ UPI confirmed by <strong>${esc(o.upiConfirmedBy.name)}</strong> at ${new Date(o.upiConfirmedBy.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`);
+    if (o.cashConfirmedBy) staffInfo.push(`💵 Cash received by <strong>${esc(o.cashConfirmedBy.name)}</strong> at ${new Date(o.cashConfirmedBy.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`);
+    if (o.closedBy) staffInfo.push(`🔒 Closed by <strong>${esc(o.closedBy.name)}</strong> at ${new Date(o.closedBy.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`);
+
     return `<div class="list-item" style="opacity:0.75">
       <div class="row">
         <div><strong>Table ${o.table}</strong><p class="muted small">Order #${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p></div>
@@ -3860,6 +3866,9 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
           <button class="btn" data-action="reprint-bill" data-id="${o.id}">🧾 Reprint Bill</button>
         </div>
       </div>
+      ${staffInfo.length ? `<div style="margin-top:8px;padding:8px 10px;background:var(--bg,#f9f6f1);border-radius:8px;display:flex;flex-direction:column;gap:4px">
+        ${staffInfo.map(s => `<p class="muted small" style="margin:0">${s}</p>`).join("")}
+      </div>` : ""}
     </div>`;
   }
 

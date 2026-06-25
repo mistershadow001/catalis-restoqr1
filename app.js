@@ -334,9 +334,24 @@
       auth.onAuthStateChanged(user => {
         currentUser = user || null;
         _isAdminCache = null; // reset on every auth change
-        if (currentUser) {
+        if (currentUser && currentUser.email) {
           startPrivateDataListeners();
           repairCachedOwnerLink();
+          // Ensure ownerIndex is populated for all restaurants this owner owns
+          // so staff write rules work immediately without waiting for settings save
+          setTimeout(() => {
+            const email = normEmail(currentUser.email);
+            state.restaurants.forEach(r => {
+              if (normEmail(r.ownerEmail) === email && r.slug) {
+                db.child("ownerIndex").child(r.slug).once("value").then(snap => {
+                  if (!snap.exists()) db.child("ownerIndex").child(r.slug).set(email);
+                });
+              }
+            });
+          }, 1500); // wait for restaurants to load
+        } else if (currentUser) {
+          // anonymous user
+          startPrivateDataListeners();
         } else {
           stopPrivateDataListeners();
         }
@@ -4100,36 +4115,43 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       const email     = (document.getElementById("staff-add-email")?.value || "").trim();
       const password  = (document.getElementById("staff-add-pass")?.value  || "").trim();
       const role      = document.getElementById("staff-add-role")?.value || "waiter";
-      if (!name)     return toast("Enter staff name");
-      if (!email)    return toast("Enter staff email");
+      if (!name)               return toast("Enter staff name");
+      if (!email)              return toast("Enter staff email");
       if (password.length < 6) return toast("Password must be at least 6 characters");
       el.textContent = "Adding…"; el.disabled = true;
-      // Use a secondary Firebase app so creating staff doesn't sign out the owner
+
+      // Step 1 — create Firebase Auth account via secondary app (keeps owner signed in)
       let secondaryApp;
-      try {
-        secondaryApp = firebase.app("staffCreator");
-      } catch(e) {
-        secondaryApp = firebase.initializeApp(window.FIREBASE_CONFIG, "staffCreator");
-      }
+      try { secondaryApp = firebase.app("staffCreator"); }
+      catch(e) { secondaryApp = firebase.initializeApp(window.FIREBASE_CONFIG, "staffCreator"); }
       const secondaryAuth = secondaryApp.auth();
+
       secondaryAuth.createUserWithEmailAndPassword(email, password)
         .then(credential => {
           const staffUid = credential.user.uid;
+          // Step 2 — write staff record as owner (owner's db reference, so rules pass)
           return db.child("staff").child(slug).child(staffUid).set({
             name, email, role, active: true, createdAt: Date.now()
-          }).then(() => secondaryAuth.signOut());
+          })
+          .then(() => secondaryAuth.signOut())  // Step 3 — clean up secondary session
+          .then(() => staffUid);
         })
-        .then(() => {
+        .then(staffUid => {
           toast(`${name} added as ${role}!`);
-          ["staff-add-name","staff-add-email","staff-add-pass"].forEach(id => {
-            const el = document.getElementById(id); if (el) el.value = "";
+          ["staff-add-name", "staff-add-email", "staff-add-pass"].forEach(id => {
+            const inp = document.getElementById(id); if (inp) inp.value = "";
           });
           el.textContent = "Add Staff"; el.disabled = false;
           render();
         })
         .catch(e => {
           el.textContent = "Add Staff"; el.disabled = false;
-          toast(friendlyAuthError(e.code));
+          const msg = {
+            "auth/email-already-in-use": "This email already has a staff account.",
+            "auth/invalid-email":        "Please enter a valid email address.",
+            "auth/weak-password":        "Password must be at least 6 characters."
+          }[e.code] || friendlyAuthError(e.code);
+          toast(msg);
         });
       return;
     }

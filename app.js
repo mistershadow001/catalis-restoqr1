@@ -340,7 +340,7 @@
         state.orders = orders;
         if (archiveOldOrders(state)) {
           db.child("orders").set(state.orders || []);
-          if (currentUser) db.child("billingArchive").set(state.billingArchive || []);
+          db.child("billingArchive").set(state.billingArchive || []);
         }
         render();
       });
@@ -365,7 +365,7 @@
       if (!archiveOldOrders(state)) return;
       if (firebaseMode && db) {
         db.child("orders").set(state.orders || []);
-        if (currentUser) db.child("billingArchive").set(state.billingArchive || []);
+        db.child("billingArchive").set(state.billingArchive || []);
       }
       render();
     }, 60 * 60 * 1000); // hourly
@@ -2303,16 +2303,16 @@
     const periodControls = `
       <div class="an-filter-bar">
         <div class="an-period-tabs">
-          <button class="an-period-tab ${period==="day"?"active":""}" onclick="window._analyticsPeriod='day';window._analyticsDayOffset=0;render()">Day</button>
-          <button class="an-period-tab ${period==="week"?"active":""}" onclick="window._analyticsPeriod='week';window._analyticsWeekOffset=0;render()">Week</button>
-          <button class="an-period-tab ${period==="month"?"active":""}" onclick="window._analyticsPeriod='month';render()">Month</button>
+          <button class="an-period-tab ${period==="day"?"active":""}" data-action="analytics-period" data-period="day">Day</button>
+          <button class="an-period-tab ${period==="week"?"active":""}" data-action="analytics-period" data-period="week">Week</button>
+          <button class="an-period-tab ${period==="month"?"active":""}" data-action="analytics-period" data-period="month">Month</button>
         </div>
         ${period === "day" ? `
-          <button class="btn" style="padding:6px 12px;font-size:13px" onclick="window._analyticsDayOffset=(window._analyticsDayOffset||0)-1;render()">← Prev</button>
-          <button class="btn" style="padding:6px 12px;font-size:13px" onclick="if((window._analyticsDayOffset||0)<0){window._analyticsDayOffset++;render()}" ${dayOffset>=0?"disabled":""}>Next →</button>
+          <button class="btn" style="padding:6px 12px;font-size:13px" data-action="analytics-nav" data-dir="-1">← Prev</button>
+          <button class="btn" style="padding:6px 12px;font-size:13px" data-action="analytics-nav" data-dir="1" ${dayOffset>=0?"disabled":""}>Next →</button>
         ` : period === "week" ? `
-          <button class="btn" style="padding:6px 12px;font-size:13px" onclick="window._analyticsWeekOffset=(window._analyticsWeekOffset||0)-1;render()">← Prev</button>
-          <button class="btn" style="padding:6px 12px;font-size:13px" onclick="if((window._analyticsWeekOffset||0)<0){window._analyticsWeekOffset++;render()}" ${weekOffset>=0?"disabled":""}>Next →</button>
+          <button class="btn" style="padding:6px 12px;font-size:13px" data-action="analytics-nav" data-dir="-1">← Prev</button>
+          <button class="btn" style="padding:6px 12px;font-size:13px" data-action="analytics-nav" data-dir="1" ${weekOffset>=0?"disabled":""}>Next →</button>
         ` : `
           <select class="an-select" onchange="(function(v){var p=v.split('-');window._analyticsMonth=Number(p[1]);window._analyticsYear=Number(p[0]);})(this.value)" data-action="analytics-month-select">
             ${monthsOpts.map(m => {
@@ -3872,6 +3872,8 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (action === "toggle-qr") return updateRestaurant(el.dataset.slug, r => r.qrEnabled = !r.qrEnabled);
     if (action === "extend-sub") return updateRestaurant(el.dataset.slug, r => { r.active = true; r.qrEnabled = true; r.subscriptionEnds = Math.max(Date.now(), r.subscriptionEnds || 0) + days(30); });
     if (action === "owner-tab") return ownerTab = el.dataset.tab, render();
+    if (action === "analytics-period") { window._analyticsPeriod = el.dataset.period; if (el.dataset.period === "day") window._analyticsDayOffset = 0; if (el.dataset.period === "week") window._analyticsWeekOffset = 0; return render(); }
+    if (action === "analytics-nav") { var dir = Number(el.dataset.dir); var p = window._analyticsPeriod || "month"; if (p === "day") window._analyticsDayOffset = (window._analyticsDayOffset || 0) + dir; if (p === "week") window._analyticsWeekOffset = (window._analyticsWeekOffset || 0) + dir; return render(); }
     if (action === "print-qr") return window.print();
     if (action === "add-item") return addMenuItem(el.dataset.slug);
     if (action === "add-common") return addCommonItem(el.dataset.slug, Number(el.dataset.index));

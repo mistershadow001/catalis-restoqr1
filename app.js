@@ -3456,99 +3456,18 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       </p>
 
       <button id="rqr-inline-cta-${o.id}" class="btn primary block"
-        style="background:#ff6b00;border:none;color:#fff;font-weight:800;font-size:15px;padding:14px;border-radius:14px;width:100%;cursor:pointer;margin-bottom:10px">
+        style="background:#ff6b00;border:none;color:#fff;font-weight:800;font-size:15px;padding:14px;border-radius:14px;width:100%;cursor:pointer;margin-bottom:10px"
+        data-action="open-review-sheet"
+        data-slug="${r.slug}"
+        data-name="${esc(r.name)}"
+        data-url="${esc(r.googleReviewUrl || "")}"
+        data-oid="${o.id}">
         ✨ ${isMr ? "माझ्यासाठी Review बनवा" : "Generate My Review"}
       </button>
       <button class="btn block" data-action="dismiss-review" data-slug="${r.slug}"
         style="font-size:13px;color:#9ca3af">
         ${isMr ? "नंतर करतो" : "Maybe later"}
       </button>
-
-      <script>
-      (function(){
-        var oid = "${o.id}";
-        var slider = document.getElementById("rqr-inline-slider-" + oid);
-        var thumb  = document.getElementById("rqr-inline-thumb-" + oid);
-        var pctEl  = document.getElementById("rqr-inline-pct-" + oid);
-        var subEl  = document.getElementById("rqr-inline-sub-" + oid);
-        var ctaBtn = document.getElementById("rqr-inline-cta-" + oid);
-        var track  = document.getElementById("rqr-inline-track-" + oid);
-        var kw0    = document.getElementById("rqr-kw0-" + oid);
-        var kw1    = document.getElementById("rqr-kw1-" + oid);
-        var kw2    = document.getElementById("rqr-kw2-" + oid);
-        var lang   = localStorage.getItem("restoqr_lang") || "en";
-        var isMr   = lang === "mr";
-
-        function update(pct) {
-          var high = pct >= 80;
-          // thumb position — use getBoundingClientRect for accuracy after paint
-          var tw = track.getBoundingClientRect().width || track.offsetWidth || 300;
-          var th = 38;
-          var left = (pct / 100) * (tw - th) + th / 2;
-          thumb.style.left = left + "px";
-          // emoji
-          thumb.textContent = pct >= 90 ? "🤩" : pct >= 80 ? "😊" : pct >= 65 ? "🙂" : pct >= 40 ? "😐" : "😞";
-          // pct label
-          pctEl.textContent = pct + "%";
-          pctEl.style.color = high ? "#16a34a" : "#dc2626";
-          // keyword highlights
-          [kw0,kw1,kw2].forEach(function(k){ if(k) k.style.opacity = ".4"; });
-          if (pct < 50 && kw0) kw0.style.opacity = "1";
-          else if (pct < 80 && kw1) kw1.style.opacity = "1";
-          else if (kw2) kw2.style.opacity = "1";
-          // sub text
-          if (pct >= 90) subEl.textContent = isMr ? "अप्रतिम! 🤩 Review generate करू का?" : "Amazing! 🤩 Let us write a review for you!";
-          else if (pct >= 80) subEl.textContent = isMr ? "छान! ✨ Review बनवायला मदत करतो." : "Great! ✨ We\\'ll help you write a review.";
-          else if (pct >= 65) subEl.textContent = isMr ? "ठीकठाक — Feedback द्याल का?" : "Pretty good — care to leave feedback instead?";
-          else subEl.textContent = isMr ? "माफ करा 😔 — Feedback नक्की पाठवा." : "We\\'re sorry 😔 — please share your feedback.";
-          // cta
-          if (high) {
-            ctaBtn.style.background = "#ff6b00";
-            ctaBtn.innerHTML = "✨ " + (isMr ? "माझ्यासाठी Review बनवा" : "Generate My Review");
-          } else {
-            ctaBtn.style.background = "#1c0e04";
-            ctaBtn.innerHTML = "📝 " + (isMr ? "Feedback द्या" : "Leave Feedback Instead");
-          }
-        }
-
-        slider.addEventListener("input", function(){ update(parseInt(slider.value)); });
-        // Defer init until after DOM is painted so track width is available
-        requestAnimationFrame(function(){ update(parseInt(slider.value)); });
-
-        ctaBtn.addEventListener("click", function(){
-          var pct = parseInt(slider.value);
-          function doShow() {
-            window._rqr_slug = ${JSON.stringify(r.slug)};
-            window.RestoReview.show({
-              restaurantName: ${JSON.stringify(r.name)},
-              restaurantSlug: ${JSON.stringify(r.slug)},
-              googleReviewUrl: ${JSON.stringify(r.googleReviewUrl || "")},
-              lang: lang,
-              satisfaction: pct,
-              db: (typeof db !== "undefined" ? db : null),
-              firebaseMode: (typeof firebaseMode !== "undefined" ? firebaseMode : false)
-            });
-          }
-          if (window.RestoReview) {
-            doShow();
-          } else {
-            // Script not ready yet — wait up to 5s then show
-            var attempts = 0;
-            var wait = setInterval(function() {
-              attempts++;
-              if (window.RestoReview) { clearInterval(wait); doShow(); }
-              else if (attempts > 50) {
-                clearInterval(wait);
-                // Fallback: open Google review URL directly
-                if (pct >= 80 && ${JSON.stringify(r.googleReviewUrl || "")}) {
-                  window.open(${JSON.stringify(r.googleReviewUrl || "#")}, "_blank");
-                }
-              }
-            }, 100);
-          }
-        });
-      })();
-      <\/script>
     </div>`;
   }
 
@@ -3763,6 +3682,24 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (action === "addon-change") return updatePaymentTotal();
     if (action === "addon-inc") return selectedAddons[el.dataset.id] = (selectedAddons[el.dataset.id] || 0) + 1, render();
     if (action === "addon-dec") return decAddon(el.dataset.id);
+    if (action === "open-review-sheet") {
+      const oid = el.dataset.oid;
+      const slider = document.getElementById("rqr-inline-slider-" + oid);
+      const pct = slider ? parseInt(slider.value) : 80;
+      const rSlug = el.dataset.slug;
+      const rName = el.dataset.name;
+      const rUrl  = el.dataset.url;
+      const rLang = localStorage.getItem("restoqr_lang") || "en";
+      const rDb   = (typeof db !== "undefined") ? db : null;
+      const rFbMode = (typeof firebaseMode !== "undefined") ? firebaseMode : false;
+      window._rqr_slug = rSlug;
+      if (window.RestoReview) {
+        window.RestoReview.show({ restaurantName: rName, restaurantSlug: rSlug, googleReviewUrl: rUrl, lang: rLang, satisfaction: pct, db: rDb, firebaseMode: rFbMode });
+      } else {
+        toast("Review generator is loading, please try again in a moment.");
+      }
+      return;
+    }
     if (action === "dismiss-review") return localStorage.removeItem("restoqr_last_order_" + el.dataset.slug), render();
     if (action === "refresh-order") return render();
     if (action === "set-star") return setStar(el);
@@ -4394,8 +4331,55 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (document.querySelector(".guide-track")) {
       initGuideStrip();
     }
+    if (document.querySelector("[id^='rqr-inline-track-']")) {
+      initReviewSliders();
+    }
   });
 }
+  function initReviewSliders() {
+    document.querySelectorAll("[id^='rqr-inline-track-']").forEach(function(track) {
+      var oid = track.id.replace("rqr-inline-track-", "");
+      var slider = document.getElementById("rqr-inline-slider-" + oid);
+      var thumb  = document.getElementById("rqr-inline-thumb-" + oid);
+      var pctEl  = document.getElementById("rqr-inline-pct-" + oid);
+      var subEl  = document.getElementById("rqr-inline-sub-" + oid);
+      var ctaBtn = document.getElementById("rqr-inline-cta-" + oid);
+      var kw0    = document.getElementById("rqr-kw0-" + oid);
+      var kw1    = document.getElementById("rqr-kw1-" + oid);
+      var kw2    = document.getElementById("rqr-kw2-" + oid);
+      if (!slider || !thumb || !track) return;
+      var lang = localStorage.getItem("restoqr_lang") || "en";
+      var isMr = lang === "mr";
+
+      function update(pct) {
+        var high = pct >= 80;
+        var tw = track.getBoundingClientRect().width || track.offsetWidth || 300;
+        var th = 38;
+        thumb.style.left = ((pct / 100) * (tw - th) + th / 2) + "px";
+        thumb.textContent = pct >= 90 ? "🤩" : pct >= 80 ? "😊" : pct >= 65 ? "🙂" : pct >= 40 ? "😐" : "😞";
+        pctEl.textContent = pct + "%";
+        pctEl.style.color = high ? "#16a34a" : "#dc2626";
+        [kw0, kw1, kw2].forEach(function(k) { if (k) k.style.opacity = ".4"; });
+        if (pct < 50 && kw0) kw0.style.opacity = "1";
+        else if (pct < 80 && kw1) kw1.style.opacity = "1";
+        else if (kw2) kw2.style.opacity = "1";
+        if (pct >= 90) subEl.textContent = isMr ? "अप्रतिम! 🤩 Review generate करू का?" : "Amazing! 🤩 Let us write a review for you!";
+        else if (pct >= 80) subEl.textContent = isMr ? "छान! ✨ Review बनवायला मदत करतो." : "Great! ✨ We'll help you write a review.";
+        else if (pct >= 65) subEl.textContent = isMr ? "ठीकठाक — Feedback द्याल का?" : "Pretty good — care to leave feedback instead?";
+        else subEl.textContent = isMr ? "माफ करा 😔 — Feedback नक्की पाठवा." : "We're sorry 😔 — please share your feedback.";
+        if (ctaBtn) {
+          ctaBtn.style.background = high ? "#ff6b00" : "#1c0e04";
+          ctaBtn.innerHTML = high
+            ? "✨ " + (isMr ? "माझ्यासाठी Review बनवा" : "Generate My Review")
+            : "📝 " + (isMr ? "Feedback द्या" : "Leave Feedback Instead");
+        }
+      }
+
+      slider.addEventListener("input", function() { update(parseInt(slider.value)); });
+      requestAnimationFrame(function() { update(parseInt(slider.value)); });
+    });
+  }
+
   function toast(msg) {
     toastEl.textContent = msg;
     toastEl.hidden = false;

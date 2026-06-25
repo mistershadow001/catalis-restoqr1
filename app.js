@@ -4273,8 +4273,10 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     const slug = slugify(name);
     if (bySlug(slug)) return toast("Restaurant name already exists");
 
+    const btn = document.querySelector("[data-action='register']");
+
     function saveRestaurant(ownerEmail) {
-      mutate(s => s.restaurants.push({
+      const newRestaurant = {
         id: uid(), slug, name, owner, phone, city, ownerPin: pin, active: false, qrEnabled: false,
         plan: "Pending", subscriptionEnds: Date.now(), paymentQr: DEFAULT_QR,
         upiId: upiId || "", upiName: upi || owner, googleReviewUrl: review,
@@ -4283,22 +4285,38 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         tables: [1, 2, 3, 4].map(no => ({ no, seats: 4 })),
         categories: ["Starters", "Main Course", "Breads", "Beverages"],
         menu: [], addons: [], createdAt: Date.now()
-      }));
-      toast("Registered! You can now log in. Admin will activate your subscription.");
-      location.hash = "#/owner?resto=" + slug;
+      };
+
+      // Write directly to restaurants/<nextIndex> instead of a transaction on
+      // the parent node. Firebase rules evaluate at $index level — a transaction
+      // on the parent is denied because there is no parent-level .write rule.
+      // Reading the current array first and writing to the next numeric index
+      // satisfies the $index rule (ownerEmail on newData matches auth.token.email).
+      db.child("restaurants").once("value").then(snap => {
+        const current = snap.val();
+        const arr = (current && typeof current === "object" && !Array.isArray(current))
+          ? Object.values(current).filter(Boolean)
+          : (Array.isArray(current) ? current : []);
+        const nextIndex = arr.length;
+        return db.child("restaurants").child(String(nextIndex)).set(newRestaurant);
+      }).then(() => {
+        state.restaurants.push(newRestaurant);
+        rememberOwnerLink(slug, ownerEmail);
+        if (btn) { btn.textContent = "Submit Registration"; btn.disabled = false; }
+        toast("Registered! Admin will activate your subscription.");
+        location.hash = "#/owner?resto=" + slug;
+        render();
+      }).catch(e => {
+        if (btn) { btn.textContent = "Submit Registration"; btn.disabled = false; }
+        toast("Save failed: " + e.message);
+      });
     }
 
     if (firebaseMode && auth) {
-      // Create Firebase Auth account for the owner, then save restaurant.
-      // createUserWithEmailAndPassword automatically signs the new user in,
-      // which triggers onAuthStateChanged — we save AFTER that fires so the
-      // write to Firebase happens with a fully authenticated session.
-      const btn = document.querySelector("[data-action='register']");
       if (btn) { btn.textContent = "Registering…"; btn.disabled = true; }
 
       auth.createUserWithEmailAndPassword(email, password)
         .then(credential => {
-          // Auth is now settled with the new user — safe to write to Firebase
           saveRestaurant(credential.user.email || email);
         })
         .catch(e => {

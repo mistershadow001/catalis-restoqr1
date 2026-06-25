@@ -14,6 +14,7 @@
   let auth = null;
   let currentUser = null;  // Firebase Auth user
   let firebaseMode = false;
+  let firebaseDataLoaded = false;
   let ownerTab = "overview";
   let customerCat = "";
   let cart = {};
@@ -277,6 +278,7 @@
       auth.onAuthStateChanged(user => {
         currentUser = user || null;
         _isAdminCache = null; // reset on every auth change
+        if (currentUser) repairCachedOwnerLink();
         render();
       });
 
@@ -288,6 +290,8 @@
           const normalized = normalizeState(value);
           checkNewOrders(normalized);
           state = normalized;
+          firebaseDataLoaded = true;
+          repairCachedOwnerLink();
           // Catch orders that crossed the retention window while the app
           // wasn't open, and persist the cleanup back to Firebase.
           if (archiveOldOrders(state)) {
@@ -301,6 +305,7 @@
           db.child("orders").set(s.orders);
           db.child("feedbacks").set(s.feedbacks);
           db.child("billingArchive").set(s.billingArchive);
+          firebaseDataLoaded = true;
           // Do NOT write meta — rules block it (.write: false)
         }
         // If value exists but has no restaurants yet (e.g. only admins node),
@@ -308,6 +313,8 @@
         else {
           const normalized = normalizeState(value);
           state = normalized;
+          firebaseDataLoaded = true;
+          repairCachedOwnerLink();
         }
         render();
       });
@@ -365,10 +372,43 @@
   // Returns the restaurant slug linked to the signed-in owner account.
   // We store   restoqr_owner_email_<slug> = email   in Firebase under each restaurant,
   // so we just scan for a match.
+  function normEmail(email) {
+    return String(email || "").trim().toLowerCase();
+  }
+
+  function rememberOwnerLink(slug, email) {
+    if (!slug) return;
+    localStorage.setItem("restoqr_owner_slug", slug);
+    const cleanEmail = normEmail(email || currentUser?.email);
+    if (cleanEmail) localStorage.setItem("restoqr_owner_email", cleanEmail);
+  }
+
   function ownerSlugForUser(user) {
     if (!user) return null;
-    const email = (user.email || "").toLowerCase();
-    return state.restaurants.find(r => (r.ownerEmail || "").toLowerCase() === email)?.slug || null;
+    const email = normEmail(user.email);
+    const linked = state.restaurants.find(r => normEmail(r.ownerEmail) === email);
+    if (linked) {
+      rememberOwnerLink(linked.slug, email);
+      return linked.slug;
+    }
+    const cachedSlug = localStorage.getItem("restoqr_owner_slug") || "";
+    const cachedEmail = normEmail(localStorage.getItem("restoqr_owner_email"));
+    if (cachedSlug && cachedEmail === email && bySlug(cachedSlug)) return cachedSlug;
+    return null;
+  }
+
+  function repairCachedOwnerLink() {
+    if (!firebaseMode || !db || !currentUser || !firebaseDataLoaded) return;
+    const email = normEmail(currentUser.email);
+    const cachedSlug = localStorage.getItem("restoqr_owner_slug") || "";
+    const cachedEmail = normEmail(localStorage.getItem("restoqr_owner_email"));
+    if (!cachedSlug || cachedEmail !== email) return;
+    const idx = state.restaurants.findIndex(r => r.slug === cachedSlug);
+    if (idx < 0) return;
+    const r = state.restaurants[idx];
+    if (normEmail(r.ownerEmail) === email || normEmail(r.ownerEmail)) return;
+    r.ownerEmail = email;
+    db.child("restaurants").child(String(idx)).child("ownerEmail").set(email);
   }
 
   // Cache for admin status — reset on sign out
@@ -1278,7 +1318,7 @@
 
       // State may not have loaded yet from Firebase DB listener — show a spinner
       // instead of "restaurant not found" which confuses owners on hard refresh.
-      if (!linkedSlug && !adminUser && !_adminCheckInFlight && state.restaurants.length === 0) {
+      if (!firebaseDataLoaded || (!linkedSlug && !adminUser && !_adminCheckInFlight && state.restaurants.length === 0)) {
         return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
       }
 
@@ -1296,14 +1336,15 @@
 
     const slug = params.get("resto") || (firebaseMode && currentUser ? ownerSlugForUser(currentUser) : null) || localStorage.getItem("restoqr_owner_slug") || (state.restaurants[0]?.slug || "");
 
-    // Persist slug so refreshes don't lose context (non-Firebase mode & convenience)
-    if (slug) localStorage.setItem("restoqr_owner_slug", slug);
+    // Persist slug so refreshes don't lose context in local mode.
+    // In Firebase mode we only remember it after access is verified below.
+    if (slug && !firebaseMode) rememberOwnerLink(slug);
 
     const r = bySlug(slug);
     if (!r) {
       // In Firebase mode with a signed-in user but no match yet, show spinner
       // (DB listener might still be loading)
-      if (firebaseMode && currentUser && state.restaurants.length === 0) {
+      if (firebaseMode && currentUser && (!firebaseDataLoaded || state.restaurants.length === 0)) {
         return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
       }
       return shell("Owner Panel", `<section class="card">${empty("Restaurant not found. Your account may not be linked to a restaurant yet.")}<a class="btn primary" href="#/register">Register Restaurant</a></section>`, "owner");
@@ -1314,12 +1355,14 @@
       const linkedSlug = ownerSlugForUser(currentUser);
       if (!linkedSlug) {
         // Allow admin to open any restaurant panel
+        if (!firebaseDataLoaded) return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
         if (!isAdmin(currentUser)) return authLoginView("owner", "Your account is not linked to any restaurant.");
       } else if (linkedSlug !== r.slug) {
         // Redirect owner to their own restaurant
         location.replace("#/owner?resto=" + linkedSlug);
         return "";
       }
+      if (linkedSlug === r.slug) rememberOwnerLink(r.slug, currentUser.email);
     }
     const signOutBtn = `<button class="btn" style="margin-left:auto" data-action="auth-signout">Sign Out</button>`;
     return `
@@ -4045,6 +4088,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
 
   function topbar(active, r) {
     const isMarathi = localStorage.getItem("restoqr_lang") === "mr";
+    const ownerNavSlug = r?.slug || (firebaseMode && currentUser ? ownerSlugForUser(currentUser) : "") || localStorage.getItem("restoqr_owner_slug") || "";
     return `<header class="topbar"><div class="topbar-inner">
       <a class="brand" href="#/"><img src="./assets/logo.png" alt="RestoQR" style="height: 60px;"></a>
       <nav class="nav">
@@ -4057,7 +4101,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         </a>
         ${r ? `<button class="btn" data-action="toggle-sound" title="${soundEnabled ? "Mute new-order alerts" : "Unmute new-order alerts"}" style="display:inline-flex;align-items:center;padding:8px 10px;font-size:16px">${soundEnabled ? "🔔" : "🔕"}</button>` : ""}
         <a class="btn ${active === "register" ? "primary" : ""}" href="#/register">${isMarathi ? "नोंदणी" : "Register"}</a>
-        <a class="btn ${active === "owner" ? "primary" : ""}" href="#/owner${r ? "?resto=" + r.slug : ""}">${isMarathi ? "मालक" : "Owner"}</a>
+        <a class="btn ${active === "owner" ? "primary" : ""}" href="#/owner${ownerNavSlug ? "?resto=" + ownerNavSlug : ""}">${isMarathi ? "मालक" : "Owner"}</a>
         <a class="btn ${active === "staff" ? "primary" : ""}" href="#/staff${r ? "?resto=" + r.slug : "?resto=" + (state.restaurants[0]?.slug || "")}">${isMarathi ? "स्टाफ" : "Staff"}</a>
         <a class="btn ${active === "admin" ? "primary" : ""}" href="#/admin">${isMarathi ? "व्यवस्थापक" : "Admin"}</a>
         <button class="btn lang-toggle-btn" id="lang-toggle-btn" title="${isMarathi ? "Switch to English" : "मराठीत बघा"}" onclick="(function(){var cur=localStorage.getItem('restoqr_lang')||'en';localStorage.setItem('restoqr_lang',cur==='mr'?'en':'mr');location.reload();})()" style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;font-weight:700;font-size:13px;border-radius:8px;background:${isMarathi ? '#ff6b00' : '#c24a00'};color:#fff;border:none;cursor:pointer">

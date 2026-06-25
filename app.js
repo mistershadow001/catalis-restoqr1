@@ -274,6 +274,13 @@
       auth = firebase.auth();
       db   = firebase.database().ref("restoqr");
 
+      function markFirebaseLoaded() {
+        if (firebaseDataLoaded) return;
+        firebaseDataLoaded = true;
+        repairCachedOwnerLink();
+        render();
+      }
+
       // Listen for auth state — renders gated views correctly
       auth.onAuthStateChanged(user => {
         currentUser = user || null;
@@ -281,6 +288,10 @@
         if (currentUser) repairCachedOwnerLink();
         render();
       });
+
+      // Whole-root reads can be delayed or denied if rules protect any child
+      // node. Do not let that leave the owner panel stuck on the loading screen.
+      setTimeout(markFirebaseLoaded, 1800);
 
       // Live DB listener
       db.on("value", snap => {
@@ -317,6 +328,16 @@
           repairCachedOwnerLink();
         }
         render();
+      }, err => {
+        console.warn("Firebase root listener blocked:", err);
+        markFirebaseLoaded();
+      });
+
+      db.child("restaurants").on("value", snap => {
+        const restaurants = snap.val();
+        if (restaurants) state.restaurants = normalizeState({ restaurants }).restaurants;
+        markFirebaseLoaded();
+        render();
       });
     }
     window.addEventListener("hashchange", () => {
@@ -347,6 +368,10 @@
   function authSignIn(email, password, onErr) {
     if (!auth) return onErr("Firebase not available");
     auth.signInWithEmailAndPassword(email, password)
+      .then(credential => {
+        const cachedSlug = cachedOwnerSlugForUser(credential.user);
+        if (cachedSlug && route().path === "/owner") location.replace("#/owner?resto=" + cachedSlug);
+      })
       .catch(e => onErr(friendlyAuthError(e.code)));
   }
 
@@ -395,6 +420,17 @@
     const cachedEmail = normEmail(localStorage.getItem("restoqr_owner_email"));
     if (cachedSlug && cachedEmail === email && bySlug(cachedSlug)) return cachedSlug;
     return null;
+  }
+
+  function cachedOwnerSlugForUser(user) {
+    if (!user) return "";
+    const cachedSlug = localStorage.getItem("restoqr_owner_slug") || "";
+    const cachedEmail = normEmail(localStorage.getItem("restoqr_owner_email"));
+    return cachedSlug && cachedEmail === normEmail(user.email) ? cachedSlug : "";
+  }
+
+  function loadingOwnerView() {
+    return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
   }
 
   function repairCachedOwnerLink() {
@@ -1312,14 +1348,19 @@
     // Firebase mode: if not logged in, show login immediately
     if (firebaseMode && !currentUser) return authLoginView("owner");
 
+    const requestedSlug = params.get("resto") || "";
+    const cachedSlug = firebaseMode && currentUser ? cachedOwnerSlugForUser(currentUser) : "";
+    const instantSlug = requestedSlug || cachedSlug;
+    const instantResto = instantSlug ? bySlug(instantSlug) : null;
+
     if (firebaseMode && currentUser) {
       const linkedSlug = ownerSlugForUser(currentUser);
       const adminUser  = isAdmin(currentUser);
 
       // State may not have loaded yet from Firebase DB listener — show a spinner
       // instead of "restaurant not found" which confuses owners on hard refresh.
-      if (!firebaseDataLoaded || (!linkedSlug && !adminUser && !_adminCheckInFlight && state.restaurants.length === 0)) {
-        return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
+      if (!instantResto && (!firebaseDataLoaded || (!linkedSlug && !adminUser && !_adminCheckInFlight && state.restaurants.length === 0))) {
+        return loadingOwnerView();
       }
 
       // If owner has a linked restaurant and no explicit slug in URL, redirect to theirs
@@ -1334,7 +1375,7 @@
       }
     }
 
-    const slug = params.get("resto") || (firebaseMode && currentUser ? ownerSlugForUser(currentUser) : null) || localStorage.getItem("restoqr_owner_slug") || (state.restaurants[0]?.slug || "");
+    const slug = requestedSlug || (firebaseMode && currentUser ? ownerSlugForUser(currentUser) : null) || cachedSlug || localStorage.getItem("restoqr_owner_slug") || (state.restaurants[0]?.slug || "");
 
     // Persist slug so refreshes don't lose context in local mode.
     // In Firebase mode we only remember it after access is verified below.
@@ -1345,7 +1386,7 @@
       // In Firebase mode with a signed-in user but no match yet, show spinner
       // (DB listener might still be loading)
       if (firebaseMode && currentUser && (!firebaseDataLoaded || state.restaurants.length === 0)) {
-        return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
+        return loadingOwnerView();
       }
       return shell("Owner Panel", `<section class="card">${empty("Restaurant not found. Your account may not be linked to a restaurant yet.")}<a class="btn primary" href="#/register">Register Restaurant</a></section>`, "owner");
     }
@@ -1355,7 +1396,11 @@
       const linkedSlug = ownerSlugForUser(currentUser);
       if (!linkedSlug) {
         // Allow admin to open any restaurant panel
-        if (!firebaseDataLoaded) return `${topbar("owner")}<main class="wrap"><div class="card" style="text-align:center;padding:40px"><p class="muted">Loading your restaurant…</p></div></main>`;
+        if (!firebaseDataLoaded && cachedSlug === r.slug) {
+          rememberOwnerLink(r.slug, currentUser.email);
+        } else if (!firebaseDataLoaded) {
+          return loadingOwnerView();
+        }
         if (!isAdmin(currentUser)) return authLoginView("owner", "Your account is not linked to any restaurant.");
       } else if (linkedSlug !== r.slug) {
         // Redirect owner to their own restaurant

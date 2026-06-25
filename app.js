@@ -1484,6 +1484,7 @@
     if (ownerTab === "kitchen") return kitchenPanel(r);
     if (ownerTab === "billing") return billingPanel(r);
     if (ownerTab === "feedback") return feedbackPanel(r);
+    if (ownerTab === "analytics") return analyticsPanel(r);
     if (ownerTab === "settings") return settingsPanel(r);
     if (ownerTab === "ai") return restoAiPanel(r);
     const open = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");

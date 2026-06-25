@@ -15,6 +15,7 @@
   let currentUser = null;  // Firebase Auth user
   let firebaseMode = false;
   let firebaseDataLoaded = false;
+  let billingArchiveListening = false;
   let ownerTab = "overview";
   let customerCat = "";
   let cart = {};
@@ -281,11 +282,31 @@
         render();
       }
 
+      function startPrivateDataListeners() {
+        if (billingArchiveListening) return;
+        billingArchiveListening = true;
+        db.child("billingArchive").on("value", snap => {
+          state.billingArchive = snap.val() || [];
+          render();
+        });
+      }
+
+      function stopPrivateDataListeners() {
+        if (!billingArchiveListening) return;
+        db.child("billingArchive").off("value");
+        billingArchiveListening = false;
+      }
+
       // Listen for auth state — renders gated views correctly
       auth.onAuthStateChanged(user => {
         currentUser = user || null;
         _isAdminCache = null; // reset on every auth change
-        if (currentUser) repairCachedOwnerLink();
+        if (currentUser) {
+          startPrivateDataListeners();
+          repairCachedOwnerLink();
+        } else {
+          stopPrivateDataListeners();
+        }
         render();
       });
 
@@ -293,52 +314,40 @@
       // node. Do not let that leave the owner panel stuck on the loading screen.
       setTimeout(markFirebaseLoaded, 1800);
 
-      // Live DB listener
-      db.on("value", snap => {
-        const value = snap.val();
-        if (value && value.restaurants) {
-          // Existing data — load it, preserve admins and other nodes
-          const normalized = normalizeState(value);
-          checkNewOrders(normalized);
-          state = normalized;
-          firebaseDataLoaded = true;
-          repairCachedOwnerLink();
-          // Catch orders that crossed the retention window while the app
-          // wasn't open, and persist the cleanup back to Firebase.
-          if (archiveOldOrders(state)) {
-            db.child("orders").set(state.orders || []);
-            db.child("billingArchive").set(state.billingArchive || []);
-          }
-        } else if (!value) {
-          // Truly empty DB — seed only the writable app data nodes, never touch meta or admins
+      // Listen only to app data children. A whole-root /restoqr listener is
+      // denied by production rules because admin/meta nodes are protected.
+      db.child("restaurants").on("value", snap => {
+        const restaurants = snap.val();
+        if (restaurants) {
+          state.restaurants = normalizeState({ restaurants }).restaurants;
+        } else if (!firebaseDataLoaded && currentUser) {
           const s = seed();
           db.child("restaurants").set(s.restaurants);
           db.child("orders").set(s.orders);
           db.child("feedbacks").set(s.feedbacks);
           db.child("billingArchive").set(s.billingArchive);
-          firebaseDataLoaded = true;
-          // Do NOT write meta — rules block it (.write: false)
         }
-        // If value exists but has no restaurants yet (e.g. only admins node),
-        // just normalize what we have without overwriting
-        else {
-          const normalized = normalizeState(value);
-          state = normalized;
-          firebaseDataLoaded = true;
-          repairCachedOwnerLink();
-        }
-        render();
-      }, err => {
-        console.warn("Firebase root listener blocked:", err);
         markFirebaseLoaded();
+        render();
       });
 
-      db.child("restaurants").on("value", snap => {
-        const restaurants = snap.val();
-        if (restaurants) state.restaurants = normalizeState({ restaurants }).restaurants;
-        markFirebaseLoaded();
+      db.child("orders").on("value", snap => {
+        const orders = snap.val() || [];
+        const nextState = { ...state, orders };
+        checkNewOrders(nextState);
+        state.orders = orders;
+        if (archiveOldOrders(state)) {
+          db.child("orders").set(state.orders || []);
+          if (currentUser) db.child("billingArchive").set(state.billingArchive || []);
+        }
         render();
       });
+
+      db.child("feedbacks").on("value", snap => {
+        state.feedbacks = snap.val() || [];
+        render();
+      });
+
     }
     window.addEventListener("hashchange", () => {
       customerCat = "";
@@ -353,7 +362,7 @@
       if (!archiveOldOrders(state)) return;
       if (firebaseMode && db) {
         db.child("orders").set(state.orders || []);
-        db.child("billingArchive").set(state.billingArchive || []);
+        if (currentUser) db.child("billingArchive").set(state.billingArchive || []);
       }
       render();
     }, 60 * 60 * 1000); // hourly
@@ -546,17 +555,55 @@
   }
 
   function save(next) {
+    const prev = clone(state);
     state = clone(next || state);
     archiveOldOrders(state);
     checkNewOrders(state);
     if (firebaseMode && db) {
-      // Never write meta (rules: .write false) or admins — only app data nodes
-      db.child("restaurants").set(state.restaurants || []);
-      db.child("orders").set(state.orders || []);
-      db.child("feedbacks").set(state.feedbacks || []);
-      db.child("billingArchive").set(state.billingArchive || []);
+      // Never write meta/admins, and never rewrite unchanged nodes. This keeps
+      // one screen with stale local data from overwriting admin updates made
+      // from another screen.
+      if (changed(prev.restaurants, state.restaurants)) syncArrayNode("restaurants", prev.restaurants, state.restaurants);
+      if (changed(prev.orders, state.orders)) syncArrayNode("orders", prev.orders, state.orders);
+      if (changed(prev.feedbacks, state.feedbacks)) syncArrayNode("feedbacks", prev.feedbacks, state.feedbacks);
+      if (currentUser && changed(prev.billingArchive, state.billingArchive)) syncArrayNode("billingArchive", prev.billingArchive, state.billingArchive);
     }
     render();
+  }
+
+  function changed(a, b) {
+    return JSON.stringify(a || []) !== JSON.stringify(b || []);
+  }
+
+  function syncArrayNode(path, prevArr, nextArr) {
+    prevArr = prevArr || [];
+    nextArr = nextArr || [];
+    const appendOnly = nextArr.length === prevArr.length + 1 && prevArr.every((item, i) => {
+      const after = nextArr[i] || {};
+      return (item.id && item.id === after.id) || (item.slug && item.slug === after.slug);
+    });
+    if (appendOnly) {
+      const item = nextArr[nextArr.length - 1];
+      db.child(path).transaction(arr => {
+        arr = arr || [];
+        const key = item.id ? "id" : item.slug ? "slug" : "";
+        if (key && arr.some(x => x && x[key] === item[key])) return arr;
+        arr.push(item);
+        return arr;
+      });
+      return;
+    }
+    const sameShape = prevArr.length === nextArr.length && nextArr.every((item, i) => {
+      const before = prevArr[i] || {};
+      return (item.id && item.id === before.id) || (item.slug && item.slug === before.slug);
+    });
+    if (!sameShape) {
+      db.child(path).set(nextArr);
+      return;
+    }
+    nextArr.forEach((item, i) => {
+      if (changed(prevArr[i], item)) db.child(path).child(String(i)).set(item);
+    });
   }
 
   function mutate(fn) {
@@ -2928,7 +2975,7 @@
         ${firebaseMode ? `
           <div class="field">
             <label>Owner Login Email <span class="muted"></span></label>
-            <input id="set-owner-email" type="email" placeholder="owner@email.com" value="${esc(r.ownerEmail || "")}">
+            <input id="set-owner-email" type="email" placeholder="owner@email.com" value="${esc(r.ownerEmail || "")}" ${_isAdminCache === true ? "" : "readonly"}>
            
           </div>` : ""}
         <button class="btn primary" data-action="save-settings" data-slug="${r.slug}">Save Settings</button>
@@ -3928,6 +3975,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
 
   function saveSettings(slug) {
     const newMasterKey = val("set-master-key");
+    const cleanOwnerEmail = settingsOwnerEmail();
     if (newMasterKey) {
       // Hash first, then save everything together
       hashMasterKey(newMasterKey).then(hash => {
@@ -3941,8 +3989,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
           r.paymentQr = val("set-qr") || DEFAULT_QR;
           const tc = Number(val("set-table-count"));
           if (tc > 0) r.tableCount = tc;
-          const email = val("set-owner-email");
-          if (email) r.ownerEmail = email.toLowerCase();
+          if (cleanOwnerEmail) r.ownerEmail = cleanOwnerEmail;
           r.masterKeyHash = hash;
         });
         toast("Settings saved! Master key updated.");
@@ -3958,11 +4005,17 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         r.paymentQr = val("set-qr") || DEFAULT_QR;
         const tc = Number(val("set-table-count"));
         if (tc > 0) r.tableCount = tc;
-        const email = val("set-owner-email");
-        if (email) r.ownerEmail = email.toLowerCase();
+        if (cleanOwnerEmail) r.ownerEmail = cleanOwnerEmail;
       });
       toast("Settings saved!");
     }
+  }
+
+  function settingsOwnerEmail() {
+    const typed = normEmail(val("set-owner-email"));
+    if (!firebaseMode) return typed;
+    if (_isAdminCache === true) return typed;
+    return normEmail(currentUser?.email) || typed;
   }
 
   function placeOrder(slug) {

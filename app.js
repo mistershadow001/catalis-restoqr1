@@ -1931,66 +1931,176 @@
 
 
   function analyticsPanel(r) {
-    // Inject Chart.js from CDN if not already loaded
+    // ── Inject Chart.js ──────────────────────────────────────────────
     if (!window._chartjsLoaded) {
       window._chartjsLoaded = true;
       const s = document.createElement("script");
       s.src = "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js";
       s.onload = () => { window._chartjsReady = true; render(); };
-      s.onerror = () => {
-        // Reset flags so the next tab switch retries loading
-        window._chartjsLoaded = false;
-        window._chartjsReady = false;
-        render();
-      };
+      s.onerror = () => { window._chartjsLoaded = false; window._chartjsReady = false; render(); };
       document.head.appendChild(s);
     }
     if (!window._chartjsReady) {
       return `<section class="card"><div class="empty">Loading charts… <button class="btn" onclick="window._chartjsLoaded=false;window._chartjsReady=false;document.querySelector('[data-action=owner-tab][data-tab=analytics]')?.click()">Retry</button></div></section>`;
     }
 
-    const allOrders = state.orders.filter(o => o.restaurantSlug === r.slug);
+    // ── Inject analytics styles once ────────────────────────────────
+    if (!document.getElementById("rqr-analytics-styles")) {
+      const st = document.createElement("style");
+      st.id = "rqr-analytics-styles";
+      st.textContent = `
+        .an-filter-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px}
+        .an-period-tabs{display:flex;background:var(--bg,#f9f5ef);border-radius:10px;padding:3px;gap:2px}
+        .an-period-tab{padding:7px 16px;border:none;background:transparent;border-radius:8px;font-size:13px;font-weight:600;color:var(--muted,#6b7280);cursor:pointer;transition:all .15s}
+        .an-period-tab.active{background:#8b4513;color:#fff;box-shadow:0 2px 8px rgba(139,69,19,.25)}
+        .an-period-tab:hover:not(.active){background:rgba(139,69,19,.1);color:#8b4513}
+        .an-select{padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:13px;background:var(--card,#fff);color:var(--text,#1c0e04)}
+        .an-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+        .an-kpi{background:var(--card,#fff);border:1.5px solid var(--line,#e5e7eb);border-radius:14px;padding:16px 18px;position:relative;overflow:hidden}
+        .an-kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--kpi-accent,#8b4513)}
+        .an-kpi-icon{font-size:20px;margin-bottom:6px}
+        .an-kpi-val{font-size:22px;font-weight:900;color:var(--text,#1c0e04);line-height:1;margin-bottom:3px}
+        .an-kpi-lbl{font-size:11px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em}
+        .an-kpi-sub{font-size:11px;color:var(--muted,#9ca3af);margin-top:3px}
+        .an-section{background:var(--bg,#f9f5ef);border-radius:14px;padding:16px;margin-bottom:14px}
+        .an-section-title{font-size:11px;font-weight:700;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.06em;margin:0 0 4px}
+        .an-section-sub{font-size:12px;color:var(--muted,#9ca3af);margin:0 0 12px}
+        .an-chart-wrap{position:relative}
+        .an-2col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+        .an-3col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px}
+        .an-progress-row{display:flex;flex-direction:column;gap:10px}
+        .an-bar-item{font-size:13px}
+        .an-bar-label{display:flex;justify-content:space-between;margin-bottom:4px}
+        .an-bar-track{background:var(--line,#e5e7eb);border-radius:4px;height:8px;overflow:hidden}
+        .an-bar-fill{height:100%;border-radius:4px;transition:width .4s}
+        .an-table-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line,#e5e7eb);font-size:13px}
+        .an-table-row:last-child{border-bottom:none}
+        .an-badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px}
+        .an-insight-chip{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#fff7ed,#ffece0);border:1.5px solid #ffd0b0;border-radius:10px;padding:8px 14px;font-size:13px;font-weight:600;color:#7a1e00;margin:4px}
+        .an-insights-row{display:flex;flex-wrap:wrap;margin-bottom:14px}
+        @media(max-width:600px){.an-2col,.an-3col{grid-template-columns:1fr}.an-kpi-grid{grid-template-columns:repeat(2,1fr)}}
+      `;
+      document.head.appendChild(st);
+    }
+
+    // ── Period state ─────────────────────────────────────────────────
+    const period = window._analyticsPeriod || "month"; // "day" | "week" | "month"
     const now = new Date();
+
+    const allOrders = state.orders.filter(o => o.restaurantSlug === r.slug);
     const currentMonth = now.getMonth();
     const currentYear  = now.getFullYear();
-
     const selMonth = window._analyticsMonth != null ? window._analyticsMonth : currentMonth;
     const selYear  = window._analyticsYear  != null ? window._analyticsYear  : currentYear;
 
-    // Months dropdown
-    const monthsWithOrders = [];
-    const seenM = new Set();
-    allOrders.forEach(o => {
-      const d = new Date(o.createdAt);
-      const key = d.getFullYear() + "-" + d.getMonth();
-      if (!seenM.has(key)) { seenM.add(key); monthsWithOrders.push({ year: d.getFullYear(), month: d.getMonth() }); }
-    });
-    monthsWithOrders.sort((a,b) => b.year - a.year || b.month - a.month);
-    if (!monthsWithOrders.length) monthsWithOrders.push({ year: currentYear, month: currentMonth });
+    // Week offset (0 = current week, -1 = last week, etc.)
+    const weekOffset = window._analyticsWeekOffset != null ? window._analyticsWeekOffset : 0;
+    // Day offset (0 = today, -1 = yesterday, etc.)
+    const dayOffset = window._analyticsDayOffset != null ? window._analyticsDayOffset : 0;
 
-    // Filtered orders
-    const orders = allOrders.filter(o => {
-      const d = new Date(o.createdAt);
-      return d.getMonth() === selMonth && d.getFullYear() === selYear;
-    });
+    // ── Resolve target dates and label ──────────────────────────────
+    let orders, periodLabel, trendLabels, trendData;
+
+    if (period === "day") {
+      const target = new Date(now);
+      target.setDate(target.getDate() + dayOffset);
+      const targetStr = target.toISOString().slice(0,10);
+      orders = allOrders.filter(o => new Date(o.createdAt).toISOString().slice(0,10) === targetStr);
+      periodLabel = dayOffset === 0 ? "Today" : dayOffset === -1 ? "Yesterday" : target.toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"short"});
+      // Hourly trend
+      trendLabels = Array.from({length:24},(_,h)=> h===0?"12am": h<12?h+"am": h===12?"12pm":(h-12)+"pm");
+      const hrBuckets = Array(24).fill(0);
+      orders.forEach(o => { if (o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted") hrBuckets[new Date(o.createdAt).getHours()] += o.total; });
+      trendData = hrBuckets;
+    } else if (period === "week") {
+      // Find the Monday of the selected week
+      const monday = new Date(now);
+      const day = monday.getDay();
+      monday.setDate(monday.getDate() - (day === 0 ? 6 : day - 1) + weekOffset * 7);
+      monday.setHours(0,0,0,0);
+      const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6); sunday.setHours(23,59,59,999);
+      orders = allOrders.filter(o => { const t = o.createdAt; return t >= monday.getTime() && t <= sunday.getTime(); });
+      const opts = {day:"numeric",month:"short"};
+      periodLabel = monday.toLocaleDateString("en-IN",opts) + " – " + sunday.toLocaleDateString("en-IN",opts) + (weekOffset === 0 ? " (This week)" : weekOffset === -1 ? " (Last week)" : "");
+      // Daily trend for the week
+      trendLabels = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+      const wkBuckets = Array(7).fill(0);
+      orders.forEach(o => {
+        if (o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted") {
+          const d = new Date(o.createdAt).getDay();
+          const idx = d === 0 ? 6 : d - 1; // Mon=0..Sun=6
+          wkBuckets[idx] += o.total;
+        }
+      });
+      trendData = wkBuckets;
+    } else {
+      // Month
+      const monthsWithOrders = [];
+      const seenM = new Set();
+      allOrders.forEach(o => {
+        const d = new Date(o.createdAt);
+        const key = d.getFullYear() + "-" + d.getMonth();
+        if (!seenM.has(key)) { seenM.add(key); monthsWithOrders.push({ year: d.getFullYear(), month: d.getMonth() }); }
+      });
+      monthsWithOrders.sort((a,b) => b.year - a.year || b.month - a.month);
+      if (!monthsWithOrders.length) monthsWithOrders.push({ year: currentYear, month: currentMonth });
+      window._analyticsMonthOptions = monthsWithOrders;
+      orders = allOrders.filter(o => {
+        const d = new Date(o.createdAt);
+        return d.getMonth() === selMonth && d.getFullYear() === selYear;
+      });
+      periodLabel = new Date(selYear, selMonth, 1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
+      // Daily revenue trend
+      const daysInMonth = new Date(selYear, selMonth+1, 0).getDate();
+      trendLabels = Array.from({length:daysInMonth},(_,i)=>i+1);
+      trendData = Array(daysInMonth).fill(0);
+      orders.forEach(o => {
+        if (o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted") trendData[new Date(o.createdAt).getDate()-1] += o.total;
+      });
+    }
+
+    // ── Core metrics ─────────────────────────────────────────────────
     const paidOrders   = orders.filter(o => o.paymentStatus === "paid" || o.paymentStatus === "cash_accepted");
     const totalRevenue = paidOrders.reduce((s,o) => s + o.total, 0);
     const upiRevenue   = orders.filter(o => o.paymentStatus === "paid").reduce((s,o) => s + o.total, 0);
     const cashRevenue  = orders.filter(o => o.paymentStatus === "cash_accepted").reduce((s,o) => s + o.total, 0);
     const avgOrderVal  = paidOrders.length ? Math.round(totalRevenue / paidOrders.length) : 0;
+    const completionRate = orders.length ? Math.round(paidOrders.length / orders.length * 100) : 0;
+    const openOrders   = orders.filter(o => o.status !== "completed").length;
 
-    // Items
-    const itemMap = {};
+    // Items — track veg/nonveg separately using menu lookup
+    const itemMap = {}, itemVegMap = {};
+    let vegQty = 0, nonVegQty = 0;
     orders.forEach(o => {
-      (o.items  || []).forEach(i => { itemMap[i.name] = (itemMap[i.name] || 0) + i.qty; });
+      (o.items || []).forEach(i => {
+        itemMap[i.name] = (itemMap[i.name] || 0) + i.qty;
+        const menuItem = (r.menu || []).find(m => m.name === i.name);
+        if (menuItem) {
+          if (menuItem.veg) vegQty += i.qty; else nonVegQty += i.qty;
+          itemVegMap[i.name] = menuItem.veg;
+        }
+      });
       (o.addons || []).forEach(a => { itemMap[a.name] = (itemMap[a.name] || 0) + (a.qty || 1); });
     });
-    const topItems = Object.entries(itemMap).sort((a,b) => b[1]-a[1]).slice(0,8);
+    const topItems = Object.entries(itemMap).sort((a,b) => b[1]-a[1]).slice(0,10);
+
+    // Category revenue
+    const catRevMap = {};
+    orders.forEach(o => {
+      (o.items || []).forEach(i => {
+        const menuItem = (r.menu || []).find(m => m.name === i.name);
+        const cat = menuItem ? menuItem.category : "Other";
+        catRevMap[cat] = (catRevMap[cat] || 0) + i.price * i.qty;
+      });
+    });
+    const topCats = Object.entries(catRevMap).sort((a,b)=>b[1]-a[1]);
 
     // Hours
     const hourMap = Array(24).fill(0);
     orders.forEach(o => { hourMap[new Date(o.createdAt).getHours()]++; });
-    const peakHour   = hourMap.indexOf(Math.max(...hourMap));
+    const peakHour = hourMap.indexOf(Math.max(...hourMap));
+    const peakHourLabel = peakHour === 0 ? "12am" : peakHour < 12 ? peakHour+"am" : peakHour === 12 ? "12pm" : (peakHour-12)+"pm";
+    const peakHourEnd  = (peakHour+1) === 12 ? "12pm" : (peakHour+1) < 12 ? (peakHour+1)+"am" : (peakHour+1) === 24 ? "12am" : (peakHour+1-12)+"pm";
 
     // Days of week
     const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -1998,261 +2108,364 @@
     orders.forEach(o => { dayMap[new Date(o.createdAt).getDay()]++; });
     const busiestDay = dayNames[dayMap.indexOf(Math.max(...dayMap))];
 
-    // Daily revenue
-    const daysInMonth  = new Date(selYear, selMonth+1, 0).getDate();
-    const dailyRevenue = Array(daysInMonth).fill(0);
-    paidOrders.forEach(o => { dailyRevenue[new Date(o.createdAt).getDate()-1] += o.total; });
-
     // Tables
     const tableMap = {};
     orders.forEach(o => { tableMap[o.table] = (tableMap[o.table]||0)+1; });
     const topTables = Object.entries(tableMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-    const tableOrderCounts = Object.values(tableMap);
-    const repeatTables = tableOrderCounts.filter(c=>c>1).length;
+    const repeatTables = Object.values(tableMap).filter(c=>c>1).length;
 
     // Feedback
     const feedbacks = (state.feedbacks||[]).filter(f => {
       if (f.restaurantSlug !== r.slug) return false;
+      if (period === "day") {
+        const target = new Date(now); target.setDate(target.getDate() + dayOffset);
+        return new Date(f.createdAt).toISOString().slice(0,10) === target.toISOString().slice(0,10);
+      }
       const d = new Date(f.createdAt);
       return d.getMonth()===selMonth && d.getFullYear()===selYear;
     });
-    const avgRating = feedbacks.length ? (feedbacks.reduce((s,f)=>s+f.stars,0)/feedbacks.length) : 0;
+    const avgSatisfaction = feedbacks.length ? Math.round(feedbacks.reduce((s,f)=>s+(f.satisfaction||0),0)/feedbacks.length) : 0;
+    const avgRating = feedbacks.length ? (feedbacks.reduce((s,f)=>s+(f.stars||0),0)/feedbacks.length) : 0;
     const starDist  = [5,4,3,2,1].map(s => ({ star:s, count: feedbacks.filter(f=>f.stars===s).length }));
 
-    const monthLabel = new Date(selYear, selMonth, 1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
+    // ── Insight chips ────────────────────────────────────────────────
+    const insights = [];
+    if (orders.length) {
+      if (peakHour && hourMap[peakHour]) insights.push(`🔥 Rush hour: ${peakHourLabel}–${peakHourEnd}`);
+      if (busiestDay) insights.push(`📅 Best day: ${busiestDay}`);
+      if (topItems.length) insights.push(`⭐ Top item: ${topItems[0][0]}`);
+      if (completionRate >= 80) insights.push(`✅ ${completionRate}% orders completed`);
+      else if (completionRate > 0) insights.push(`⚠️ ${completionRate}% completion rate`);
+      if (upiRevenue > cashRevenue) insights.push(`📲 UPI preferred (${Math.round(upiRevenue/(totalRevenue||1)*100)}%)`);
+      else if (cashRevenue > 0) insights.push(`💵 Cash preferred (${Math.round(cashRevenue/(totalRevenue||1)*100)}%)`);
+      if (topTables.length) insights.push(`🪑 Busiest: Table ${topTables[0][0]}`);
+    }
 
-    // Unique chart IDs per render to avoid canvas reuse issues
-    const chartUid = Date.now();
-    const cRevenue  = "ch-revenue-"  + chartUid;
-    const cHours    = "ch-hours-"    + chartUid;
-    const cDays     = "ch-days-"     + chartUid;
-    const cPayment  = "ch-payment-"  + chartUid;
-    const cItems    = "ch-items-"    + chartUid;
-    const cFeedback = "ch-feedback-" + chartUid;
+    // ── Chart IDs ────────────────────────────────────────────────────
+    const cid = Date.now();
+    const cTrend    = "ch-trend-"    + cid;
+    const cHours    = "ch-hours-"    + cid;
+    const cDays     = "ch-days-"     + cid;
+    const cPayment  = "ch-payment-"  + cid;
+    const cItems    = "ch-items-"    + cid;
+    const cFeedback = "ch-feedback-" + cid;
+    const cCategory = "ch-category-" + cid;
+    const cVegNv    = "ch-vegnv-"    + cid;
 
-    // Schedule chart draws after DOM is painted
+    // ── Draw charts ──────────────────────────────────────────────────
     setTimeout(() => {
       if (!window.Chart) return;
-
       const defaults = {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: {} } }
       };
+      const BROWN = "#8b4513", BROWN_LIGHT = "rgba(139,69,19,0.15)";
+      const GREEN  = "#2e7d32", BLUE = "#1a73e8", GOLD = "#c4a96a";
+      const PAL = [BROWN,"#a0522d",GREEN,"#388e3c","#558b2f",BLUE,"#c4a96a","#9ca3af","#ef6c00","#6b7280"];
 
-      // 1. Daily Revenue Line Chart
-      const elRev = document.getElementById(cRevenue);
-      if (elRev) new Chart(elRev, {
-        type: "line",
+      // 1. Revenue / Orders trend
+      const elTrend = document.getElementById(cTrend);
+      if (elTrend) new Chart(elTrend, {
+        type: period === "day" ? "bar" : "line",
         data: {
-          labels: Array.from({length:daysInMonth},(_,i)=>i+1),
+          labels: trendLabels,
           datasets: [{
-            data: dailyRevenue,
-            borderColor: "#8b4513",
-            backgroundColor: "rgba(139,69,19,0.08)",
-            fill: true,
+            data: trendData,
+            borderColor: BROWN,
+            backgroundColor: period === "day" ? trendData.map(v=>v>0?BROWN:BROWN_LIGHT) : BROWN_LIGHT,
+            fill: period !== "day",
             tension: 0.4,
-            pointRadius: dailyRevenue.map(v=>v>0?3:0),
-            pointBackgroundColor: "#8b4513"
+            borderRadius: 5,
+            pointRadius: trendData.map(v=>v>0?3:0),
+            pointBackgroundColor: BROWN
           }]
         },
         options: { ...defaults, scales: {
-          x: { grid:{display:false}, ticks:{font:{size:10}, maxTicksLimit:10} },
-          y: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, callback:v=>"₹"+v.toLocaleString("en-IN")} }
-        }, plugins: { legend:{display:false}, tooltip:{ callbacks:{ label: ctx=>"₹"+ctx.raw.toLocaleString("en-IN") } } } }
+          x: { grid:{display:false}, ticks:{font:{size:10}, maxTicksLimit: period==="day"?12:15} },
+          y: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, callback:v=>"₹"+(v>=1000?Math.round(v/1000)+"k":v)}}
+        }, plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>"₹"+ctx.raw.toLocaleString("en-IN")}}}}
       });
 
-      // 2. Peak Hours Bar Chart
+      // 2. Peak Hours bar
       const elHrs = document.getElementById(cHours);
       if (elHrs) new Chart(elHrs, {
         type: "bar",
         data: {
-          labels: Array.from({length:24},(_,h)=> h===0?"12am": h<12?h+"am": h===12?"12pm":(h-12)+"pm"),
-          datasets: [{
-            data: hourMap,
-            backgroundColor: hourMap.map((_,h)=> h===peakHour ? "#8b4513" : "rgba(139,69,19,0.2)"),
-            borderRadius: 4
-          }]
+          labels: Array.from({length:24},(_,h)=> h===0?"12a": h<12?h+"a": h===12?"12p":(h-12)+"p"),
+          datasets: [{ data: hourMap, backgroundColor: hourMap.map((_,h)=> h===peakHour ? BROWN : BROWN_LIGHT), borderRadius: 3 }]
         },
         options: { ...defaults, scales: {
-          x: { grid:{display:false}, ticks:{font:{size:9}, maxRotation:45} },
-          y: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, stepSize:1} }
-        }, plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:ctx=>ctx.raw+" orders" } } } }
+          x: { grid:{display:false}, ticks:{font:{size:9}, maxRotation:0} },
+          y: { grid:{color:"#f0ebe3"}, ticks:{font:{size:9}, stepSize:1} }
+        }, plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+" orders"}}}}
       });
 
-      // 3. Day of Week Bar Chart
+      // 3. Day of week bar
       const elDays = document.getElementById(cDays);
       if (elDays) new Chart(elDays, {
         type: "bar",
         data: {
           labels: dayNames,
-          datasets: [{
-            data: dayMap,
-            backgroundColor: dayMap.map((_,i)=> i===dayMap.indexOf(Math.max(...dayMap)) ? "#8b4513" : "rgba(139,69,19,0.2)"),
-            borderRadius: 4
-          }]
+          datasets: [{ data: dayMap, backgroundColor: dayMap.map((_,i)=>i===dayMap.indexOf(Math.max(...dayMap))?BROWN:BROWN_LIGHT), borderRadius: 4 }]
         },
         options: { ...defaults, scales: {
           x: { grid:{display:false}, ticks:{font:{size:11}} },
           y: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, stepSize:1} }
-        }, plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:ctx=>ctx.raw+" orders" } } } }
+        }, plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+" orders"}}}}
       });
 
-      // 4. Payment Doughnut
+      // 4. Payment doughnut
       const elPay = document.getElementById(cPayment);
       if (elPay && (upiRevenue||cashRevenue)) new Chart(elPay, {
         type: "doughnut",
         data: {
-          labels: ["UPI","Cash"],
-          datasets: [{
-            data: [upiRevenue, cashRevenue],
-            backgroundColor: ["#1a73e8","#c4a96a"],
-            borderWidth: 2,
-            borderColor: "#fff"
-          }]
+          labels: ["UPI 📲","Cash 💵"],
+          datasets: [{ data: [upiRevenue, cashRevenue], backgroundColor: [BLUE, GOLD], borderWidth: 2, borderColor: "#fff" }]
         },
         options: { ...defaults, cutout:"68%",
-          plugins: { legend:{display:true, position:"bottom", labels:{font:{size:12}}},
-            tooltip:{ callbacks:{ label:ctx=>"₹"+ctx.raw.toLocaleString("en-IN") } } } }
+          plugins:{legend:{display:true,position:"bottom",labels:{font:{size:12}}},
+          tooltip:{callbacks:{label:ctx=>"₹"+ctx.raw.toLocaleString("en-IN")}}}}
       });
 
-      // 5. Top Items Horizontal Bar
+      // 5. Top items horizontal bar
       const elItm = document.getElementById(cItems);
       if (elItm && topItems.length) new Chart(elItm, {
         type: "bar",
         data: {
           labels: topItems.map(([n])=>n),
-          datasets: [{
-            data: topItems.map(([,q])=>q),
-            backgroundColor: ["#2e7d32","#388e3c","#558b2f","#8b4513","#a0522d","#c4a96a","#9ca3af","#6b7280"],
-            borderRadius: 4
-          }]
+          datasets: [{ data: topItems.map(([,q])=>q), backgroundColor: PAL.slice(0,topItems.length), borderRadius: 4 }]
         },
         options: { ...defaults, indexAxis:"y",
           scales: {
             x: { grid:{color:"#f0ebe3"}, ticks:{font:{size:10}, stepSize:1} },
             y: { grid:{display:false}, ticks:{font:{size:11}} }
           },
-          plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:ctx=>ctx.raw+" sold" } } } }
+          plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+" sold"}}}}
       });
 
-      // 6. Star Rating Doughnut
+      // 6. Star / satisfaction feedback doughnut
       const elFb = document.getElementById(cFeedback);
-      if (elFb && feedbacks.length) new Chart(elFb, {
+      if (elFb && feedbacks.length) {
+        const hasSatisfaction = feedbacks.some(f => f.satisfaction != null);
+        if (hasSatisfaction) {
+          const buckets = { "😍 Great (80-100)":0, "🙂 OK (60-79)":0, "😞 Poor (<60)":0 };
+          feedbacks.forEach(f => {
+            const s = f.satisfaction || 0;
+            if (s >= 80) buckets["😍 Great (80-100)"]++;
+            else if (s >= 60) buckets["🙂 OK (60-79)"]++;
+            else buckets["😞 Poor (<60)"]++;
+          });
+          new Chart(elFb, {
+            type: "doughnut",
+            data: { labels: Object.keys(buckets), datasets:[{ data: Object.values(buckets), backgroundColor:[GREEN,"#c4a96a","#c93333"], borderWidth:2, borderColor:"#fff" }]},
+            options: { ...defaults, cutout:"60%", plugins:{legend:{display:true,position:"bottom",labels:{font:{size:11}}}, tooltip:{callbacks:{label:ctx=>ctx.label+": "+ctx.raw}}}}
+          });
+        } else {
+          new Chart(elFb, {
+            type: "doughnut",
+            data: { labels:["5★","4★","3★","2★","1★"], datasets:[{ data: starDist.map(s=>s.count), backgroundColor:[GREEN,"#66bb6a",GOLD,"#ef6c00","#c93333"], borderWidth:2, borderColor:"#fff" }]},
+            options: { ...defaults, cutout:"60%", plugins:{legend:{display:true,position:"bottom",labels:{font:{size:11}}}, tooltip:{callbacks:{label:ctx=>ctx.label+" · "+ctx.raw+" reviews"}}}}
+          });
+        }
+      }
+
+      // 7. Category revenue pie
+      const elCat = document.getElementById(cCategory);
+      if (elCat && topCats.length) new Chart(elCat, {
+        type: "pie",
+        data: {
+          labels: topCats.map(([n])=>n),
+          datasets: [{ data: topCats.map(([,v])=>v), backgroundColor: PAL.slice(0,topCats.length), borderWidth: 2, borderColor:"#fff" }]
+        },
+        options: { ...defaults, plugins:{legend:{display:true,position:"bottom",labels:{font:{size:11},padding:10}},
+          tooltip:{callbacks:{label:ctx=>"₹"+ctx.raw.toLocaleString("en-IN")+" · "+ctx.label}}}}
+      });
+
+      // 8. Veg vs Non-veg doughnut
+      const elVeg = document.getElementById(cVegNv);
+      if (elVeg && (vegQty || nonVegQty)) new Chart(elVeg, {
         type: "doughnut",
         data: {
-          labels: ["5★","4★","3★","2★","1★"],
-          datasets: [{
-            data: starDist.map(s=>s.count),
-            backgroundColor: ["#2e7d32","#66bb6a","#c4a96a","#ef6c00","#c93333"],
-            borderWidth: 2,
-            borderColor: "#fff"
-          }]
+          labels: ["🟢 Veg","🔴 Non-veg"],
+          datasets: [{ data: [vegQty, nonVegQty], backgroundColor: [GREEN,"#c93333"], borderWidth:2, borderColor:"#fff" }]
         },
-        options: { ...defaults, cutout:"60%",
-          plugins: { legend:{display:true, position:"bottom", labels:{font:{size:11}}},
-            tooltip:{ callbacks:{ label:ctx=>ctx.label+" · "+ctx.raw+" reviews" } } } }
+        options: { ...defaults, cutout:"65%",
+          plugins:{legend:{display:true,position:"bottom",labels:{font:{size:12}}},
+          tooltip:{callbacks:{label:ctx=>ctx.label+": "+ctx.raw+" items"}}}}
       });
 
     }, 80);
 
-    return `
-      <section class="card">
-        <div class="section-head">
-          <div><h2>📊 Analytics</h2><p>Business insights for ${monthLabel}</p></div>
-          <select onchange="(function(v){var parts=v.split('-');window._analyticsMonth=Number(parts[1]);window._analyticsYear=Number(parts[0]);})(this.value)"
-            style="padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;font-size:13px;background:var(--card,#fff)"
-            data-action="analytics-month-select">
-            ${monthsWithOrders.map(m => {
+    // ── Period selector HTML ─────────────────────────────────────────
+    const monthsOpts = (window._analyticsMonthOptions || [{year:currentYear,month:currentMonth}]);
+    const periodControls = `
+      <div class="an-filter-bar">
+        <div class="an-period-tabs">
+          <button class="an-period-tab ${period==="day"?"active":""}" onclick="window._analyticsPeriod='day';window._analyticsDayOffset=0;render()">Day</button>
+          <button class="an-period-tab ${period==="week"?"active":""}" onclick="window._analyticsPeriod='week';window._analyticsWeekOffset=0;render()">Week</button>
+          <button class="an-period-tab ${period==="month"?"active":""}" onclick="window._analyticsPeriod='month';render()">Month</button>
+        </div>
+        ${period === "day" ? `
+          <button class="btn" style="padding:6px 12px;font-size:13px" onclick="window._analyticsDayOffset=(window._analyticsDayOffset||0)-1;render()">← Prev</button>
+          <button class="btn" style="padding:6px 12px;font-size:13px" onclick="if((window._analyticsDayOffset||0)<0){window._analyticsDayOffset++;render()}" ${dayOffset>=0?"disabled":""}>Next →</button>
+        ` : period === "week" ? `
+          <button class="btn" style="padding:6px 12px;font-size:13px" onclick="window._analyticsWeekOffset=(window._analyticsWeekOffset||0)-1;render()">← Prev</button>
+          <button class="btn" style="padding:6px 12px;font-size:13px" onclick="if((window._analyticsWeekOffset||0)<0){window._analyticsWeekOffset++;render()}" ${weekOffset>=0?"disabled":""}>Next →</button>
+        ` : `
+          <select class="an-select" onchange="(function(v){var p=v.split('-');window._analyticsMonth=Number(p[1]);window._analyticsYear=Number(p[0]);})(this.value)" data-action="analytics-month-select">
+            ${monthsOpts.map(m => {
               const lbl = new Date(m.year,m.month,1).toLocaleDateString("en-IN",{month:"long",year:"numeric"});
-              const val = m.year+"-"+m.month;
-              return `<option value="${val}" ${m.month===selMonth&&m.year===selYear?"selected":""}>${lbl}</option>`;
+              return `<option value="${m.year}-${m.month}" ${m.month===selMonth&&m.year===selYear?"selected":""}>${lbl}</option>`;
             }).join("")}
           </select>
+        `}
+      </div>`;
+
+    // ── KPI cards ────────────────────────────────────────────────────
+    const kpiCards = [
+      { icon:"💰", val: money(totalRevenue), lbl:"Total Revenue", sub: paidOrders.length+" paid orders", accent:"#8b4513" },
+      { icon:"🧾", val: orders.length, lbl:"Total Orders", sub: openOrders+" still open", accent:"#1a73e8" },
+      { icon:"📊", val: money(avgOrderVal), lbl:"Avg Order Value", sub: completionRate+"% completion", accent:"#2e7d32" },
+      { icon:"📲", val: money(upiRevenue), lbl:"UPI Revenue", sub: money(cashRevenue)+" via cash", accent:"#1a73e8" },
+      { icon:"🕐", val: orders.length ? peakHourLabel+"–"+peakHourEnd : "—", lbl:"Peak Hour", sub: hourMap[peakHour]+" orders at peak", accent:"#ef6c00" },
+      { icon:"📅", val: orders.length ? busiestDay : "—", lbl:"Busiest Day", sub: dayMap[dayMap.indexOf(Math.max(...dayMap))]+" orders", accent:"#8b4513" },
+      { icon:"⭐", val: avgRating ? avgRating.toFixed(1)+"/5" : "—", lbl:"Avg Rating", sub: feedbacks.length+" feedbacks", accent:"#f59e0b" },
+      { icon:"✅", val: completionRate+"%", lbl:"Completion Rate", sub: paidOrders.length+" completed", accent:"#2e7d32" }
+    ];
+
+    return `
+      <section class="card">
+        <div class="section-head" style="margin-bottom:16px">
+          <div>
+            <h2 style="margin:0 0 2px">📊 Analytics</h2>
+            <p style="margin:0;font-size:13px;color:var(--muted,#6b7280)">${periodLabel}</p>
+          </div>
         </div>
 
-        ${!orders.length ? `<div class="empty">No orders found for ${monthLabel}</div>` : `
+        ${periodControls}
 
-        <!-- KPIs -->
-        <div class="grid-4" style="margin-bottom:18px">
-          ${stat("Total Orders", orders.length)}
-          ${stat("Revenue", money(totalRevenue))}
-          ${stat("Avg Order", money(avgOrderVal))}
-          ${stat("Avg Rating", avgRating ? "⭐ "+avgRating.toFixed(1)+" / 5" : "—")}
+        ${!orders.length ? `
+          <div class="empty" style="padding:48px 0;text-align:center">
+            <div style="font-size:40px;margin-bottom:12px">📭</div>
+            <p style="font-weight:700;margin:0 0 6px">No orders for ${periodLabel}</p>
+            <p class="muted" style="margin:0">Try a different date range or check back later</p>
+          </div>
+        ` : `
+
+        <!-- Insight chips -->
+        ${insights.length ? `<div class="an-insights-row">${insights.map(i=>`<span class="an-insight-chip">${i}</span>`).join("")}</div>` : ""}
+
+        <!-- KPI grid -->
+        <div class="an-kpi-grid">
+          ${kpiCards.map(k=>`
+            <div class="an-kpi" style="--kpi-accent:${k.accent}">
+              <div class="an-kpi-icon">${k.icon}</div>
+              <div class="an-kpi-val">${k.val}</div>
+              <div class="an-kpi-lbl">${k.lbl}</div>
+              <div class="an-kpi-sub">${k.sub}</div>
+            </div>`).join("")}
         </div>
 
-        <!-- Daily Revenue Line -->
-        <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px;margin-bottom:14px">
-          <p style="margin:0 0 12px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">📈 Daily Revenue — ${monthLabel}</p>
-          <div style="position:relative;height:160px"><canvas id="${cRevenue}"></canvas></div>
+        <!-- Revenue Trend -->
+        <div class="an-section">
+          <p class="an-section-title">📈 ${period==="day"?"Hourly Revenue":period==="week"?"Daily Revenue This Week":"Daily Revenue"}</p>
+          <p class="an-section-sub">Total: ${money(totalRevenue)} · ${paidOrders.length} paid orders</p>
+          <div class="an-chart-wrap" style="height:170px"><canvas id="${cTrend}"></canvas></div>
         </div>
 
         <!-- Peak Hours + Day of Week -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
-            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">🕐 Peak Hours</p>
-            <p style="margin:0 0 10px;font-size:12px;color:var(--muted,#6b7280)">Busiest: <strong>${peakHour}:00–${peakHour+1}:00</strong></p>
-            <div style="position:relative;height:140px"><canvas id="${cHours}"></canvas></div>
+        <div class="an-2col">
+          <div class="an-section" style="margin-bottom:0">
+            <p class="an-section-title">🕐 Peak Hours</p>
+            <p class="an-section-sub">Rush: <strong>${peakHourLabel}–${peakHourEnd}</strong> · ${hourMap[peakHour]} orders</p>
+            <div class="an-chart-wrap" style="height:130px"><canvas id="${cHours}"></canvas></div>
           </div>
-          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
-            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">📅 Orders by Day</p>
-            <p style="margin:0 0 10px;font-size:12px;color:var(--muted,#6b7280)">Busiest: <strong>${busiestDay}</strong></p>
-            <div style="position:relative;height:140px"><canvas id="${cDays}"></canvas></div>
-          </div>
-        </div>
-
-        <!-- Payment Split + Feedback Rating -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
-            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">💳 Payment Split</p>
-            <p style="margin:0 0 10px;font-size:12px;color:var(--muted,#6b7280)">UPI ${money(upiRevenue)} · Cash ${money(cashRevenue)}</p>
-            <div style="position:relative;height:180px">
-              ${upiRevenue||cashRevenue ? `<canvas id="${cPayment}"></canvas>` : `<p class="muted small" style="padding-top:40px;text-align:center">No paid orders</p>`}
-            </div>
-          </div>
-          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
-            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">⭐ Feedback Ratings</p>
-            <p style="margin:0 0 10px;font-size:12px;color:var(--muted,#6b7280)">${feedbacks.length} reviews · Avg ${avgRating?avgRating.toFixed(1):"—"}</p>
-            <div style="position:relative;height:180px">
-              ${feedbacks.length ? `<canvas id="${cFeedback}"></canvas>` : `<p class="muted small" style="padding-top:40px;text-align:center">No feedback yet</p>`}
-            </div>
+          <div class="an-section" style="margin-bottom:0">
+            <p class="an-section-title">📅 Orders by Day</p>
+            <p class="an-section-sub">Busiest: <strong>${busiestDay}</strong></p>
+            <div class="an-chart-wrap" style="height:130px"><canvas id="${cDays}"></canvas></div>
           </div>
         </div>
+        <div style="margin-bottom:14px"></div>
 
-        <!-- Top Items Horizontal Bar -->
-        <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px;margin-bottom:14px">
-          <p style="margin:0 0 12px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">🍽 Top Ordered Items</p>
-          <div style="position:relative;height:${Math.max(topItems.length*36,100)}px">
+        <!-- Payment + Feedback -->
+        <div class="an-2col">
+          <div class="an-section" style="margin-bottom:0">
+            <p class="an-section-title">💳 Payment Split</p>
+            <p class="an-section-sub">UPI ${money(upiRevenue)} · Cash ${money(cashRevenue)}</p>
+            <div class="an-chart-wrap" style="height:190px">
+              ${upiRevenue||cashRevenue ? `<canvas id="${cPayment}"></canvas>` : `<p class="muted small" style="padding-top:50px;text-align:center">No paid orders</p>`}
+            </div>
+          </div>
+          <div class="an-section" style="margin-bottom:0">
+            <p class="an-section-title">⭐ Customer Feedback</p>
+            <p class="an-section-sub">${feedbacks.length} reviews · Avg ${avgRating?avgRating.toFixed(1):"—"}${avgSatisfaction?` · Satisfaction ${avgSatisfaction}%`:""}</p>
+            <div class="an-chart-wrap" style="height:190px">
+              ${feedbacks.length ? `<canvas id="${cFeedback}"></canvas>` : `<p class="muted small" style="padding-top:50px;text-align:center">No feedback yet</p>`}
+            </div>
+          </div>
+        </div>
+        <div style="margin-bottom:14px"></div>
+
+        <!-- Category Pie + Veg/Non-veg -->
+        <div class="an-2col">
+          <div class="an-section" style="margin-bottom:0">
+            <p class="an-section-title">🍽 Revenue by Category</p>
+            <p class="an-section-sub">Which categories drive the most revenue</p>
+            <div class="an-chart-wrap" style="height:200px">
+              ${topCats.length ? `<canvas id="${cCategory}"></canvas>` : `<p class="muted small" style="padding-top:50px;text-align:center">No data</p>`}
+            </div>
+          </div>
+          <div class="an-section" style="margin-bottom:0">
+            <p class="an-section-title">🟢 Veg vs Non-veg</p>
+            <p class="an-section-sub">By items sold · Veg ${vegQty} · Non-veg ${nonVegQty}</p>
+            <div class="an-chart-wrap" style="height:200px">
+              ${vegQty||nonVegQty ? `<canvas id="${cVegNv}"></canvas>` : `<p class="muted small" style="padding-top:50px;text-align:center">No data</p>`}
+            </div>
+          </div>
+        </div>
+        <div style="margin-bottom:14px"></div>
+
+        <!-- Top Items horizontal bar -->
+        <div class="an-section">
+          <p class="an-section-title">🏆 Top Ordered Items</p>
+          <p class="an-section-sub">${topItems.length} items sold in this period</p>
+          <div class="an-chart-wrap" style="height:${Math.max(topItems.length*34,100)}px">
             ${topItems.length ? `<canvas id="${cItems}"></canvas>` : `<p class="muted small">No items data</p>`}
           </div>
         </div>
 
-        <!-- Busiest Tables + Order Health -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
-            <p style="margin:0 0 10px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">🪑 Busiest Tables</p>
+        <!-- Tables + Order Health -->
+        <div class="an-2col">
+          <div class="an-section" style="margin-bottom:0">
+            <p class="an-section-title">🪑 Busiest Tables</p>
+            <p class="an-section-sub">${repeatTables} tables with repeat orders</p>
             ${topTables.length ? topTables.map(([tbl,count],i)=>`
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,#e5e7eb)">
-                <span style="font-size:13px">${i===0?"🥇":i===1?"🥈":i===2?"🥉":"  "} Table ${tbl}</span>
-                <strong style="font-size:13px">${count} orders</strong>
-              </div>`).join("") : `<p class="muted small">No data</p>`}
-            <p style="margin:10px 0 0;font-size:12px;color:var(--muted,#6b7280)">🔁 ${repeatTables} tables ordered more than once</p>
-          </div>
-          <div style="background:var(--bg,#f9f5ef);border-radius:12px;padding:16px">
-            <p style="margin:0 0 10px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">📦 Order Health</p>
-            <div style="display:flex;flex-direction:column;gap:10px">
-              ${[
-                ["Placed", orders.length, "#8b4513"],
-                ["Completed", paidOrders.length, "#2e7d32"],
-                ["Still Open", orders.filter(o=>o.status!=="completed").length, "#c4a96a"]
-              ].map(([label,val,color])=>`
-                <div>
-                  <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>${label}</span><strong>${val}</strong></div>
-                  <div style="background:var(--line,#e5e7eb);border-radius:4px;height:8px;overflow:hidden">
-                    <div style="width:${orders.length?Math.round(val/orders.length*100):0}%;height:100%;background:${color};border-radius:4px"></div>
+              <div class="an-table-row">
+                <span>${i===0?"🥇":i===1?"🥈":i===2?"🥉":"  "} Table ${tbl}</span>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:60px;background:var(--line,#e5e7eb);border-radius:3px;height:6px;overflow:hidden">
+                    <div style="width:${Math.round(count/(topTables[0][1]||1)*100)}%;height:100%;background:#8b4513;border-radius:3px"></div>
                   </div>
+                  <strong>${count}</strong>
+                </div>
+              </div>`).join("") : `<p class="muted small">No data</p>`}
+          </div>
+          <div class="an-section" style="margin-bottom:0">
+            <p class="an-section-title">📦 Order Health</p>
+            <p class="an-section-sub">Completion rate: <strong>${completionRate}%</strong></p>
+            <div class="an-progress-row">
+              ${[
+                ["Total Placed", orders.length, orders.length, "#8b4513"],
+                ["Completed", paidOrders.length, orders.length, "#2e7d32"],
+                ["Still Open", openOrders, orders.length, "#ef6c00"],
+                ["Cancelled/Other", Math.max(0,orders.length-paidOrders.length-openOrders), orders.length, "#9ca3af"]
+              ].map(([label,val,total,color])=>`
+                <div class="an-bar-item">
+                  <div class="an-bar-label"><span>${label}</span><strong>${val}</strong></div>
+                  <div class="an-bar-track"><div class="an-bar-fill" style="width:${total?Math.round(val/total*100):0}%;background:${color}"></div></div>
                 </div>`).join("")}
-              <p style="margin:4px 0 0;font-size:13px">Completion rate: <strong>${orders.length?Math.round(paidOrders.length/orders.length*100):0}%</strong></p>
             </div>
           </div>
         </div>

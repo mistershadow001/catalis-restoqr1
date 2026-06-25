@@ -314,12 +314,31 @@
         render();
       }
 
+      let ordersListening = false;
+
       function startPrivateDataListeners() {
         if (billingArchiveListening) return;
         billingArchiveListening = true;
         db.child("billingArchive").on("value", snap => {
           const raw = snap.val();
           state.billingArchive = (raw && typeof raw === "object" && !Array.isArray(raw)) ? Object.values(raw).filter(Boolean) : (Array.isArray(raw) ? raw : []);
+          render();
+        });
+      }
+
+      function startOrdersListener() {
+        if (ordersListening) return;
+        ordersListening = true;
+        db.child("orders").on("value", snap => {
+          const raw = snap.val();
+          const orders = (raw && typeof raw === "object" && !Array.isArray(raw)) ? Object.values(raw).filter(Boolean) : (Array.isArray(raw) ? raw : []);
+          const nextState = { ...state, orders };
+          checkNewOrders(nextState);
+          state.orders = orders;
+          if (archiveOldOrders(state)) {
+            (state.orders || []).forEach((o, i) => db.child("orders").child(String(i)).set(o));
+            db.child("billingArchive").set(state.billingArchive || []);
+          }
           render();
         });
       }
@@ -336,6 +355,7 @@
         _isAdminCache = null; // reset on every auth change
         if (currentUser && currentUser.email) {
           startPrivateDataListeners();
+          startOrdersListener();
           repairCachedOwnerLink();
           // Ensure ownerIndex is populated for all restaurants this owner owns
           // so staff write rules work immediately without waiting for settings save
@@ -352,6 +372,7 @@
         } else if (currentUser) {
           // anonymous user
           startPrivateDataListeners();
+          startOrdersListener();
         } else {
           stopPrivateDataListeners();
         }
@@ -380,19 +401,8 @@
         render();
       });
 
-      db.child("orders").on("value", snap => {
-        const raw = snap.val();
-        const orders = (raw && typeof raw === "object" && !Array.isArray(raw)) ? Object.values(raw).filter(Boolean) : (Array.isArray(raw) ? raw : []);
-        const nextState = { ...state, orders };
-        checkNewOrders(nextState);
-        state.orders = orders;
-        if (archiveOldOrders(state)) {
-          // Write each order to its own $index — parent .set() is blocked by rules.
-          (state.orders || []).forEach((o, i) => db.child("orders").child(String(i)).set(o));
-          db.child("billingArchive").set(state.billingArchive || []);
-        }
-        render();
-      });
+      // Orders listener is now started inside onAuthStateChanged via startOrdersListener()
+      // so it only attaches after auth is confirmed — avoids permission denied on startup.
 
       db.child("feedbacks").on("value", snap => {
         const raw = snap.val();

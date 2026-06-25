@@ -3494,6 +3494,10 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
   }
 
   function customerView(params) {
+    // Customers need Firebase Auth to write orders — sign in anonymously if not already signed in
+    if (firebaseMode && auth && !currentUser) {
+      auth.signInAnonymously().catch(() => {});
+    }
     const slug = params.get("resto") || (state.restaurants[0]?.slug || "");
     const r = bySlug(slug);
     if (!r) return customerShell("Restaurant unavailable", `<div class="empty">Restaurant not found.</div>`);

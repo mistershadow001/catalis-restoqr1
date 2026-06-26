@@ -2568,6 +2568,7 @@
   // ================================================================
 
   let staffAudioCtx = null;
+  let staffSoundEnabled = localStorage.getItem("restoqr_staff_sound_off") !== "yes";
   function ensureStaffAudio() {
     if (!staffAudioCtx) {
       try { staffAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { staffAudioCtx = null; }
@@ -2577,6 +2578,7 @@
   }
   // Double-pulse for waiter/bill requests
   function playWaiterAlertSound() {
+    if (!staffSoundEnabled) return;
     const ctx = ensureStaffAudio(); if (!ctx) return;
     const now = ctx.currentTime;
     [0, 0.18, 0.36, 0.54].forEach((t, i) => {
@@ -2588,6 +2590,7 @@
   }
   // Softer chime for new kitchen orders
   function playOrderChimeSound() {
+    if (!staffSoundEnabled) return;
     const ctx = ensureStaffAudio(); if (!ctx) return;
     const now = ctx.currentTime;
     [0, 0.22].forEach((t, i) => {
@@ -2625,7 +2628,7 @@
     });
     const currentIds = new Set(orders.map(o => o.id));
     Object.keys(staffSeenFingerprints).forEach(id => { if (!currentIds.has(id)) delete staffSeenFingerprints[id]; });
-    if (hasWaiterAlert) playWaiterAlertSound();
+    if (hasWaiterAlert && staffRole(slug) === "waiter") playWaiterAlertSound();
     else if (hasOrderUpdate) playOrderChimeSound();
   }
 
@@ -2873,6 +2876,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           ${pendingAlerts ? `<div style="background:#e74c3c;color:#fff;border-radius:20px;padding:5px 14px;font-size:12px;font-weight:800;letter-spacing:.02em;animation:pulse-red 1.5s infinite">⚡ ${pendingAlerts} Alert${pendingAlerts>1?"s":""}</div>` : ""}
+          ${staffRole(r.slug) === "waiter" ? `<button class="sbtn plain" style="font-size:18px;padding:6px 10px;background:rgba(255,255,255,.08);border:1px solid rgba(196,169,106,.3)" data-action="staff-toggle-sound" data-slug="${r.slug}" title="${staffSoundEnabled ? "Mute alerts" : "Unmute alerts"}">${staffSoundEnabled ? "🔔" : "🔕"}</button>` : ""}
           <button class="sbtn plain" style="font-size:11px;padding:7px 12px;background:rgba(255,255,255,.08);color:#c4a96a;border-color:rgba(196,169,106,.3);border:1px solid rgba(196,169,106,.3)" data-action="staff-logout" data-slug="${r.slug}">Exit</button>
         </div>
       </div>
@@ -3727,6 +3731,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         </p>
 
         <button class="btn block" style="width:100%;margin-bottom:10px" data-action="refresh-order" data-slug="${r.slug}">↻ Refresh Status</button>
+        <button class="btn block" style="width:100%;margin-bottom:10px;background:#fff7ed;border:1.5px solid #f59e0b;color:#92400e;font-weight:700" data-action="call-waiter" data-order="${o.id}" data-slug="${r.slug}">${o.waiterRequest === "waiter" ? "🔔 Waiter Notified — Coming Soon" : "🔔 Call Waiter"}</button>
         <button class="btn block" style="width:100%;color:var(--muted,#6b7280)" data-action="dismiss-review" data-slug="${r.slug}">+ Order More Items</button>
 
         <div style="background:var(--card,#fff);border:1px solid var(--line,#e5e7eb);border-radius:12px;padding:14px;margin-top:14px">
@@ -4067,6 +4072,10 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     }
     if (action === "dismiss-review") return localStorage.removeItem("restoqr_last_order_" + el.dataset.slug), render();
     if (action === "refresh-order") return render();
+    if (action === "call-waiter") {
+      mutate(s => { const o = s.orders.find(x => x.id === el.dataset.order); if (o && o.waiterRequest !== "waiter") o.waiterRequest = "waiter"; });
+      return;
+    }
     if (action === "set-star") return setStar(el);
     if (action === "submit-feedback") return submitFeedback(el);
     if (action === "mark-paid") return updateOrder(el.dataset.id, o => { o.paymentStatus = "paid"; o.status = "pending"; });
@@ -4207,6 +4216,13 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       return;
     }
     if (action === "staff-tab") { staffTab = el.dataset.tab; staffSheetTable = null; return render(); }
+    if (action === "staff-toggle-sound") {
+      staffSoundEnabled = !staffSoundEnabled;
+      localStorage.setItem("restoqr_staff_sound_off", staffSoundEnabled ? "no" : "yes");
+      if (staffSoundEnabled) { ensureStaffAudio(); playWaiterAlertSound(); }
+      toast(staffSoundEnabled ? "🔔 Alert sound ON" : "🔕 Alert sound muted");
+      return render();
+    }
     if (action === "staff-open-table") { staffSheetTable = Number(el.dataset.table); return render(); }
     if (action === "staff-close-sheet") { staffSheetTable = null; return render(); }
     if (action === "staff-dismiss-waiter") {

@@ -125,22 +125,74 @@
   ];
 
   const CAFE_ITEMS = [
-    ["Espresso", "Coffee", 80, true], ["Americano", "Coffee", 100, true], ["Cappuccino", "Coffee", 130, true],
-    ["Latte", "Coffee", 150, true], ["Flat White", "Coffee", 160, true], ["Mocha", "Coffee", 160, true],
-    ["Cold Coffee", "Coffee", 150, true], ["Cold Brew", "Coffee", 180, true], ["Iced Latte", "Coffee", 170, true],
-    ["Masala Chai", "Tea & More", 60, true], ["Cutting Chai", "Tea & More", 30, true], ["Green Tea", "Tea & More", 80, true],
-    ["Lemon Iced Tea", "Tea & More", 110, true], ["Hot Chocolate", "Tea & More", 150, true],
-    ["Croissant", "Bakery", 120, true], ["Blueberry Muffin", "Bakery", 100, true], ["Chocolate Muffin", "Bakery", 100, true],
-    ["Banana Bread", "Bakery", 90, true], ["Cinnamon Roll", "Bakery", 130, true], ["Brownie", "Bakery", 110, true],
-    ["Cookies (2 pcs)", "Bakery", 80, true],
-    ["Veg Sandwich", "Snacks", 120, true], ["Grilled Cheese Sandwich", "Snacks", 140, true], ["Club Sandwich", "Snacks", 180, false],
-    ["Paneer Wrap", "Snacks", 160, true], ["Cheese Toast", "Snacks", 100, true], ["Bruschetta", "Snacks", 130, true],
-    ["French Fries", "Snacks", 120, true], ["Nachos with Dip", "Snacks", 150, true],
-    ["Fruit Bowl", "Healthy", 140, true], ["Granola Bowl", "Healthy", 160, true], ["Avocado Toast", "Healthy", 200, true],
-    ["Smoothie Bowl", "Healthy", 190, true], ["Fresh Orange Juice", "Healthy", 100, true],
-    ["Waffles", "Desserts", 180, true], ["Pancakes", "Desserts", 160, true], ["Tiramisu", "Desserts", 200, true],
-    ["Cheesecake", "Desserts", 180, true], ["Chocolate Lava Cake", "Desserts", 190, true]
-  ];
+  // Coffee
+  ["Espresso", "Coffee", 80, true],
+  ["Americano", "Coffee", 100, true],
+  ["Cappuccino", "Coffee", 140, true],
+  ["Latte", "Coffee", 150, true],
+  ["Mocha", "Coffee", 170, true],
+  ["Cold Coffee", "Coffee", 160, true],
+  ["Cold Brew", "Coffee", 180, true],
+  ["Iced Latte", "Coffee", 170, true],
+
+  // Tea & Beverages
+  ["Masala Chai", "Tea & More", 50, true],
+  ["Cutting Chai", "Tea & More", 30, true],
+  ["Green Tea", "Tea & More", 80, true],
+  ["Lemon Iced Tea", "Tea & More", 120, true],
+  ["Hot Chocolate", "Tea & More", 180, true],
+  ["Fresh Lime Soda", "Tea & More", 90, true],
+
+  // Shakes & Coolers
+  ["Oreo Shake", "Shakes", 180, true],
+  ["Chocolate Shake", "Shakes", 170, true],
+  ["KitKat Shake", "Shakes", 190, true],
+  ["Strawberry Shake", "Shakes", 170, true],
+  ["Mango Smoothie", "Shakes", 180, true],
+
+  // Bakery
+  ["Croissant", "Bakery", 120, true],
+  ["Chocolate Muffin", "Bakery", 100, true],
+  ["Brownie", "Bakery", 120, true],
+  ["Garlic Bread", "Bakery", 140, true],
+  ["Cheese Garlic Bread", "Bakery", 180, true],
+
+  // Burgers
+  ["Veg Burger", "Burgers", 160, true],
+  ["Cheese Burger", "Burgers", 190, true],
+  ["Paneer Burger", "Burgers", 210, true],
+
+  // Pizza
+  ["Margherita Pizza", "Pizza", 260, true],
+  ["Farm Fresh Pizza", "Pizza", 320, true],
+  ["Paneer Tikka Pizza", "Pizza", 360, true],
+  ["Veggie Delight Pizza", "Pizza", 340, true],
+
+  // Pasta
+  ["White Sauce Pasta", "Pasta", 260, true],
+  ["Red Sauce Pasta", "Pasta", 250, true],
+  ["Pink Sauce Pasta", "Pasta", 280, true],
+
+  // Sandwiches & Wraps
+  ["Veg Grilled Sandwich", "Snacks", 160, true],
+  ["Cheese Corn Sandwich", "Snacks", 180, true],
+  ["Club Sandwich", "Snacks", 220, true],
+  ["Paneer Wrap", "Snacks", 190, true],
+
+  // Snacks
+  ["French Fries", "Snacks", 140, true],
+  ["Peri Peri Fries", "Snacks", 170, true],
+  ["Loaded Fries", "Snacks", 220, true],
+  ["Nachos with Cheese Dip", "Snacks", 220, true],
+  ["Cheese Balls", "Snacks", 190, true],
+
+  // Desserts
+  ["Chocolate Brownie with Ice Cream", "Desserts", 220, true],
+  ["Chocolate Lava Cake", "Desserts", 200, true],
+  ["Cheesecake", "Desserts", 240, true],
+  ["Belgian Waffles", "Desserts", 260, true],
+  ["Ice Cream Sundae", "Desserts", 180, true]
+];
 
   function seed() {
     const now = Date.now();

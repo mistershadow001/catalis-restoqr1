@@ -18,10 +18,13 @@
   let billingArchiveListening = false;
   let ownerTab = "overview";
   let customerCat = "";
+  let customerSearch = "";        // live text typed into the customer menu search box
+  let customerVegFilter = "all";  // "all" | "veg" | "nonveg" — customer menu veg/non-veg filter
   let cart = {};
   let selectedAddons = {}; // addonId -> true
   let billingDateFilter = new Date().toISOString().slice(0, 10); // YYYY-MM-DD, default today
   let carouselInitialized = false; // Flag to ensure carousel is initialized only once
+  let commonItemsTab = "resto"; // "resto" | "cafe" — tab shown in the Common Items panel
 
   // ================================================================
   // STAFF DASHBOARD — state
@@ -119,6 +122,24 @@
     ["Garlic Naan", "Breads", 60, true], ["Butter Naan", "Breads", 55, true], ["Chapati", "Breads", 20, true],
     ["Masala Chai", "Beverages", 40, true], ["Cold Coffee", "Beverages", 120, true], ["Fresh Lime Soda", "Beverages", 80, true],
     ["Mineral Water", "Beverages", 25, true], ["Gulab Jamun", "Desserts", 90, true], ["Ice Cream", "Desserts", 100, true]
+  ];
+
+  const CAFE_ITEMS = [
+    ["Espresso", "Coffee", 80, true], ["Americano", "Coffee", 100, true], ["Cappuccino", "Coffee", 130, true],
+    ["Latte", "Coffee", 150, true], ["Flat White", "Coffee", 160, true], ["Mocha", "Coffee", 160, true],
+    ["Cold Coffee", "Coffee", 150, true], ["Cold Brew", "Coffee", 180, true], ["Iced Latte", "Coffee", 170, true],
+    ["Masala Chai", "Tea & More", 60, true], ["Cutting Chai", "Tea & More", 30, true], ["Green Tea", "Tea & More", 80, true],
+    ["Lemon Iced Tea", "Tea & More", 110, true], ["Hot Chocolate", "Tea & More", 150, true],
+    ["Croissant", "Bakery", 120, true], ["Blueberry Muffin", "Bakery", 100, true], ["Chocolate Muffin", "Bakery", 100, true],
+    ["Banana Bread", "Bakery", 90, true], ["Cinnamon Roll", "Bakery", 130, true], ["Brownie", "Bakery", 110, true],
+    ["Cookies (2 pcs)", "Bakery", 80, true],
+    ["Veg Sandwich", "Snacks", 120, true], ["Grilled Cheese Sandwich", "Snacks", 140, true], ["Club Sandwich", "Snacks", 180, false],
+    ["Paneer Wrap", "Snacks", 160, true], ["Cheese Toast", "Snacks", 100, true], ["Bruschetta", "Snacks", 130, true],
+    ["French Fries", "Snacks", 120, true], ["Nachos with Dip", "Snacks", 150, true],
+    ["Fruit Bowl", "Healthy", 140, true], ["Granola Bowl", "Healthy", 160, true], ["Avocado Toast", "Healthy", 200, true],
+    ["Smoothie Bowl", "Healthy", 190, true], ["Fresh Orange Juice", "Healthy", 100, true],
+    ["Waffles", "Desserts", 180, true], ["Pancakes", "Desserts", 160, true], ["Tiramisu", "Desserts", 200, true],
+    ["Cheesecake", "Desserts", 180, true], ["Chocolate Lava Cake", "Desserts", 190, true]
   ];
 
   function seed() {
@@ -413,6 +434,8 @@
     }
     window.addEventListener("hashchange", () => {
       customerCat = "";
+      customerSearch = "";
+      customerVegFilter = "all";
       staffSheetTable = null;
       render();
     });
@@ -1661,16 +1684,21 @@
         <button class="btn primary" data-action="add-item" data-slug="${r.slug}">Add Item</button>
       </section>
       <section class="card" style="margin-top:14px">
-        <div class="section-head"><div><h2>Common Restaurant Items</h2><p>Select ready-made items and only change the price.</p></div></div>
+        <div class="section-head"><div><h2>Common Items</h2><p>Select ready-made items and only change the price.</p></div></div>
+        <div class="tab-bar" style="margin-bottom:16px;display:flex;gap:8px;border-bottom:2px solid var(--line);padding-bottom:0">
+          <button class="tab-btn ${commonItemsTab === "resto" ? "active" : ""}" data-action="common-items-tab" data-tab="resto" style="border-radius:8px 8px 0 0;margin-bottom:-2px">🍛 Resto / Dhaba</button>
+          <button class="tab-btn ${commonItemsTab === "cafe" ? "active" : ""}" data-action="common-items-tab" data-tab="cafe" style="border-radius:8px 8px 0 0;margin-bottom:-2px">☕ Cafe</button>
+        </div>
         <div class="catalog-grid">
-          ${COMMON_ITEMS.map((c, idx) => {
+          ${(commonItemsTab === "cafe" ? CAFE_ITEMS : COMMON_ITEMS).map((c, idx) => {
             const dotStyle = `color:${c[3] ? "var(--ok)" : "var(--bad)"}`;
+            const dataSource = commonItemsTab === "cafe" ? "cafe" : "resto";
             return `
             <div class="catalog-card">
               <div><strong><span style="${dotStyle}">●</span> ${esc(c[0])}</strong><p class="muted small">${esc(c[1])}</p></div>
               <div class="row-left">
-                <input id="common-price-${idx}" type="number" value="${c[2]}" aria-label="${esc(c[0])} price">
-                <button class="btn primary" data-action="add-common" data-slug="${r.slug}" data-index="${idx}">Add</button>
+                <input id="common-price-${dataSource}-${idx}" type="number" value="${c[2]}" aria-label="${esc(c[0])} price">
+                <button class="btn primary" data-action="add-common" data-slug="${r.slug}" data-index="${idx}" data-source="${dataSource}">Add</button>
               </div>
             </div>`;
           }).join("")}
@@ -3563,7 +3591,13 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       return customerShell(r.name, customerOrderTrackingView(r, lastOrder));
     }
     if (!customerCat) customerCat = r.categories[0] || unique(r.menu.map(i => i.category))[0] || "";
-    const items = r.menu.filter(i => i.available && i.category === customerCat);
+    const searchQuery = (customerSearch || "").trim();
+    const searchLower = searchQuery.toLowerCase();
+    let items = searchLower
+      ? r.menu.filter(i => i.available && i.name.toLowerCase().includes(searchLower))
+      : r.menu.filter(i => i.available && i.category === customerCat);
+    if (customerVegFilter === "veg") items = items.filter(i => i.veg);
+    else if (customerVegFilter === "nonveg") items = items.filter(i => !i.veg);
     const total = cartTotal(r);
     return `
       <div class="customer-shell">
@@ -3573,16 +3607,53 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
           <input class="table-box" id="customer-table" value="${table}" type="number" min="1">
         </div>
         ${lastOrder && (lastOrder.status === "completed" || lastOrder.status === "delivered") ? customerStatusCard(r, lastOrder) : ""}
-        <div class="cat-strip">${unique(r.menu.map(i => i.category)).map(c => `<button class="${c === customerCat ? "active" : ""}" data-action="customer-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+        ${customerMenuSearchBar(searchQuery)}
+        ${searchLower
+          ? `<div style="padding:10px 14px 0;font-size:13px;color:var(--muted,#6b7280)">${items.length} result${items.length === 1 ? "" : "s"} for &ldquo;${esc(searchQuery)}&rdquo;</div>`
+          : `<div class="cat-strip">${unique(r.menu.map(i => i.category)).map(c => `<button class="${c === customerCat ? "active" : ""}" data-action="customer-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>`}
         <div style="padding-bottom:${(cartCount() || addonCartCount()) ? "160px" : "80px"}">
-          ${items.map(i => customerItem(r, i)).join("") || empty("No items available")}
-          ${r.addons.filter(a => a.active).length ? `
+          ${items.map(i => customerItem(r, i)).join("") || empty(searchLower ? "No dishes match your search" : "No items available")}
+          ${(!searchLower && r.addons.filter(a => a.active).length) ? `
             <div style="padding:10px 14px 4px;border-top:1px solid var(--line);margin-top:8px">
               <p style="font-size:12px;font-weight:600;color:var(--muted,#6b7280);margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
               ${r.addons.filter(a => a.active).map(a => customerAddonItem(a)).join("")}
             </div>` : ""}
         </div>
         ${(cartCount() || addonCartCount()) ? checkoutBox(r, total) : ""}
+      </div>`;
+  }
+
+  // Search box + Veg/Non-veg filter pills shown above the customer menu.
+  // Search matches dish names across the whole menu (not just the active
+  // category); the veg/non-veg pill narrows whichever list is showing.
+  function customerMenuSearchBar(searchQuery) {
+    const pill = (value, label) => {
+      const active = customerVegFilter === value;
+      return `<button data-action="customer-veg-filter" data-veg="${value}"
+        style="flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:999px;
+        font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer;
+        border:1px solid ${active ? "var(--kpi-accent,#8b4513)" : "var(--line,#e5e7eb)"};
+        background:${active ? "var(--kpi-accent,#8b4513)" : "var(--card,#fff)"};
+        color:${active ? "#fff" : "var(--text,#1a1a1a)"};">${label}</button>`;
+    };
+    return `
+      <div style="padding:12px 14px 10px;border-bottom:1px solid var(--line)">
+        <div style="position:relative;display:flex;align-items:center">
+          <svg style="position:absolute;left:12px;width:17px;height:17px;color:var(--muted,#9ca3af);pointer-events:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input id="customer-search-input" data-action="customer-search" type="text" value="${esc(searchQuery)}"
+            placeholder="Search for a dish…" autocomplete="off"
+            style="width:100%;box-sizing:border-box;padding:11px 38px 11px 36px;border:1px solid var(--line,#e5e7eb);
+            border-radius:999px;font-size:14.5px;background:var(--card,#fff);color:var(--text,#1a1a1a);outline:none">
+          ${searchQuery ? `<button data-action="customer-search-clear" aria-label="Clear search"
+            style="position:absolute;right:8px;width:22px;height:22px;border:none;border-radius:50%;
+            background:var(--line,#e5e7eb);color:var(--muted,#6b7280);font-size:13px;line-height:1;
+            display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0">✕</button>` : ""}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;overflow-x:auto">
+          ${pill("all", "All")}
+          ${pill("veg", "🟢 Veg")}
+          ${pill("nonveg", "🔴 Non-veg")}
+        </div>
       </div>`;
   }
 
@@ -3594,6 +3665,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       ${q ? `<div class="qty"><button data-action="cart-dec" data-id="${i.id}">-</button><strong>${q}</strong><button class="plus" data-action="cart-inc" data-id="${i.id}">+</button></div>` : `<button class="btn primary" data-action="cart-inc" data-id="${i.id}">Add</button>`}
     </div>`;
   }
+
 
   function customerAddonItem(a) {
     const q = selectedAddons[a.id] || 0;
@@ -4028,11 +4100,12 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (action === "toggle-qr") return updateRestaurant(el.dataset.slug, r => r.qrEnabled = !r.qrEnabled);
     if (action === "extend-sub") return updateRestaurant(el.dataset.slug, r => { r.active = true; r.qrEnabled = true; r.subscriptionEnds = Math.max(Date.now(), r.subscriptionEnds || 0) + days(30); });
     if (action === "owner-tab") return ownerTab = el.dataset.tab, render();
+    if (action === "common-items-tab") return commonItemsTab = el.dataset.tab, render();
     if (action === "analytics-period") { window._analyticsPeriod = el.dataset.period; if (el.dataset.period === "day") window._analyticsDayOffset = 0; if (el.dataset.period === "week") window._analyticsWeekOffset = 0; return render(); }
     if (action === "analytics-nav") { var dir = Number(el.dataset.dir); var p = window._analyticsPeriod || "month"; if (p === "day") window._analyticsDayOffset = (window._analyticsDayOffset || 0) + dir; if (p === "week") window._analyticsWeekOffset = (window._analyticsWeekOffset || 0) + dir; return render(); }
     if (action === "print-qr") return window.print();
     if (action === "add-item") return addMenuItem(el.dataset.slug);
-    if (action === "add-common") return addCommonItem(el.dataset.slug, Number(el.dataset.index));
+    if (action === "add-common") return addCommonItem(el.dataset.slug, Number(el.dataset.index), el.dataset.source);
     if (action === "update-price") return updateRestaurant(el.dataset.slug, r => { const found = find(r.menu, el.dataset.id); if (found) found.price = Number(val("price-" + el.dataset.id)) || found.price; });
     if (action === "toggle-item") return updateRestaurant(el.dataset.slug, r => find(r.menu, el.dataset.id).available = !find(r.menu, el.dataset.id).available);
     if (action === "delete-item") return updateRestaurant(el.dataset.slug, r => r.menu = r.menu.filter(i => i.id !== el.dataset.id));
@@ -4043,6 +4116,14 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (action === "delete-table") return updateRestaurant(el.dataset.slug, r => r.tables = r.tables.filter(t => String(t.no) !== String(el.dataset.table)));
     if (action === "save-settings") return saveSettings(el.dataset.slug);
     if (action === "customer-cat") return customerCat = el.dataset.cat, render();
+    if (action === "customer-veg-filter") return customerVegFilter = el.dataset.veg, render();
+    if (action === "customer-search-clear") {
+      customerSearch = "";
+      render();
+      const ni = document.getElementById("customer-search-input");
+      if (ni) ni.focus();
+      return;
+    }
     if (action === "cart-inc") return cart[el.dataset.id] = (cart[el.dataset.id] || 0) + 1, render();
     if (action === "cart-dec") return decCart(el.dataset.id);
     if (action === "place-order") return placeOrder(el.dataset.slug);
@@ -4410,10 +4491,12 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     });
   }
 
-  function addCommonItem(slug, index) {
-    const c = COMMON_ITEMS[index];
+  function addCommonItem(slug, index, source) {
+    const list = source === "cafe" ? CAFE_ITEMS : COMMON_ITEMS;
+    const c = list[index];
     if (!c) return;
-    const price = Number(val("common-price-" + index)) || c[2];
+    const priceInputId = "common-price-" + (source || "resto") + "-" + index;
+    const price = Number(val(priceInputId)) || c[2];
     updateRestaurant(slug, r => {
       if (!r.categories.includes(c[1])) r.categories.push(c[1]);
       if (r.menu.some(i => i.name.toLowerCase() === c[0].toLowerCase())) return toast("Item already exists");
@@ -4545,6 +4628,8 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     cart = {};
     selectedAddons = {};
     customerCat = "";
+    customerSearch = "";
+    customerVegFilter = "all";
     render();
   }
 
@@ -4607,6 +4692,8 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     cart = {};
     selectedAddons = {};
     customerCat = "";
+    customerSearch = "";
+    customerVegFilter = "all";
     render();
   }
 
@@ -4899,6 +4986,15 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
   document.addEventListener("click", function unlockAudioOnce() { ensureAudioCtx(); }, { once: true });
   window.addEventListener("afterprint", () => {
     document.body.classList.remove("printing-receipt");
+  });
+  document.addEventListener("input", function(e) {
+    const el = e.target.closest("[data-action='customer-search']");
+    if (!el) return;
+    customerSearch = el.value;
+    const pos = el.selectionStart;
+    render();
+    const ni = document.getElementById("customer-search-input");
+    if (ni) { ni.focus(); ni.setSelectionRange(pos, pos); }
   });
   document.addEventListener("change", function(e) {
     const el = e.target.closest("[data-action]");

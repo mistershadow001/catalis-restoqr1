@@ -869,6 +869,7 @@
           <section class="media-carousel">
           <div class="carousel-container">
             <div class="carousel-track">
+          
               <div class="carousel-slide">
                 <img src="assets/demo1.png" alt="Restaurant Demo">
               </div>
@@ -880,6 +881,9 @@
               </div>
               <div class="carousel-slide">
                 <img src="assets/demo4.png" alt="Restaurant Demo">
+              </div>
+              <div class="carousel-slide">
+                <img src="assets/demo5.png" alt="Restaurant Demo" style="width:100%">
               </div>
             </div>
             <button class="carousel-btn prev">❮</button>

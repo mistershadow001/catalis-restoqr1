@@ -869,9 +869,6 @@
           <section class="media-carousel">
           <div class="carousel-container">
             <div class="carousel-track">
-            <div class="carousel-slide">
-                <img src="assets/intro1.png" alt="Restaurant Demo">
-              </div>
               <div class="carousel-slide">
                 <img src="assets/demo1.png" alt="Restaurant Demo">
               </div>

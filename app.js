@@ -3731,7 +3731,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         </p>
 
         <button class="btn block" style="width:100%;margin-bottom:10px" data-action="refresh-order" data-slug="${r.slug}">↻ Refresh Status</button>
-        <button class="btn block" style="width:100%;margin-bottom:10px;background:#fff7ed;border:1.5px solid #f59e0b;color:#92400e;font-weight:700" data-action="call-waiter" data-order="${o.id}" data-slug="${r.slug}">${o.waiterRequest === "waiter" ? "🔔 Waiter Notified — Coming Soon" : "🔔 Call Waiter"}</button>
+        <button class="btn block" style="width:100%;margin-bottom:10px;background:#fff7ed;border:1.5px solid #f59e0b;color:#92400e;font-weight:700" data-action="call-waiter" data-order="${o.id}" data-slug="${r.slug}">${o.waiterRequest === "waiter" ? "🔔 Serving Staff Notified" : "🔔 Call Serving Staff"}</button>
         <button class="btn block" style="width:100%;color:var(--muted,#6b7280)" data-action="dismiss-review" data-slug="${r.slug}">+ Order More Items</button>
 
         <div style="background:var(--card,#fff);border:1px solid var(--line,#e5e7eb);border-radius:12px;padding:14px;margin-top:14px">
@@ -3816,6 +3816,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         style="font-size:13px;color:#9ca3af">
         ${isMr ? "नंतर करतो" : "Maybe later"}
       </button>
+      <button class="btn block" style="width:100%;margin-top:8px;background:#fff7ed;border:1.5px solid #f59e0b;color:#92400e;font-weight:700" data-action="call-waiter" data-order="${o.id}" data-slug="${r.slug}">${o.waiterRequest === "waiter" ? "🔔 Serving Staff Notified" : "🔔 Call Serving Staff"}</button>
     </div>`;
   }
 

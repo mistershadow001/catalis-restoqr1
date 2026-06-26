@@ -3598,6 +3598,14 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       : r.menu.filter(i => i.available && i.category === customerCat);
     if (customerVegFilter === "veg") items = items.filter(i => i.veg);
     else if (customerVegFilter === "nonveg") items = items.filter(i => !i.veg);
+    // Add-ons are searchable too: when a query is typed, only matching add-ons
+    // show under the "Add-ons" header; with no query, all active add-ons show
+    // (same as before search existed).
+    const matchedAddons = searchLower
+      ? r.addons.filter(a => a.active && a.name.toLowerCase().includes(searchLower))
+      : r.addons.filter(a => a.active);
+    const noResults = items.length === 0 && matchedAddons.length === 0;
+    const totalMatches = items.length + matchedAddons.length;
     const total = cartTotal(r);
     return `
       <div class="customer-shell">
@@ -3609,15 +3617,19 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         ${lastOrder && (lastOrder.status === "completed" || lastOrder.status === "delivered") ? customerStatusCard(r, lastOrder) : ""}
         ${customerMenuSearchBar(searchQuery)}
         ${searchLower
-          ? `<div style="padding:10px 14px 0;font-size:13px;color:var(--muted,#6b7280)">${items.length} result${items.length === 1 ? "" : "s"} for &ldquo;${esc(searchQuery)}&rdquo;</div>`
+          ? `<div style="padding:10px 14px 0;font-size:13px;color:var(--muted,#6b7280)">${totalMatches} result${totalMatches === 1 ? "" : "s"} for &ldquo;${esc(searchQuery)}&rdquo;</div>`
           : `<div class="cat-strip">${unique(r.menu.map(i => i.category)).map(c => `<button class="${c === customerCat ? "active" : ""}" data-action="customer-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>`}
         <div style="padding-bottom:${(cartCount() || addonCartCount()) ? "160px" : "80px"}">
-          ${items.map(i => customerItem(r, i)).join("") || empty(searchLower ? "No dishes match your search" : "No items available")}
-          ${(!searchLower && r.addons.filter(a => a.active).length) ? `
-            <div style="padding:10px 14px 4px;border-top:1px solid var(--line);margin-top:8px">
-              <p style="font-size:12px;font-weight:600;color:var(--muted,#6b7280);margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
-              ${r.addons.filter(a => a.active).map(a => customerAddonItem(a)).join("")}
-            </div>` : ""}
+          <!-- Scrolls internally once content exceeds ~5-6 rows, instead of stretching the whole page -->
+          <div style="max-height:420px;overflow-y:auto;-webkit-overflow-scrolling:touch">
+            ${items.map(i => customerItem(r, i)).join("")}
+            ${matchedAddons.length ? `
+              <div style="padding:10px 14px 4px;border-top:1px solid var(--line);margin-top:8px">
+                <p style="font-size:12px;font-weight:600;color:var(--muted,#6b7280);margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
+                ${matchedAddons.map(a => customerAddonItem(a)).join("")}
+              </div>` : ""}
+            ${noResults ? empty(searchLower ? "No items match your search" : "No items available") : ""}
+          </div>
         </div>
         ${(cartCount() || addonCartCount()) ? checkoutBox(r, total) : ""}
       </div>`;
@@ -3641,7 +3653,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         <div style="position:relative;display:flex;align-items:center">
           <svg style="position:absolute;left:12px;width:17px;height:17px;color:var(--muted,#9ca3af);pointer-events:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <input id="customer-search-input" data-action="customer-search" type="text" value="${esc(searchQuery)}"
-            placeholder="Search for a dish…" autocomplete="off"
+            placeholder="Search dishes &amp; add-ons…" autocomplete="off"
             style="width:100%;box-sizing:border-box;padding:11px 38px 11px 36px;border:1px solid var(--line,#e5e7eb);
             border-radius:999px;font-size:14.5px;background:var(--card,#fff);color:var(--text,#1a1a1a);outline:none">
           ${searchQuery ? `<button data-action="customer-search-clear" aria-label="Clear search"

@@ -3310,7 +3310,7 @@
   function staffKitchenView(r) {
     const orders = state.orders.filter(o =>
       o.restaurantSlug === r.slug &&
-      (o.paymentStatus==="paid" || o.paymentStatus==="cash_sent" || o.paymentStatus==="cash_accepted") &&
+      (o.paymentStatus==="paid" || o.paymentStatus==="cash_sent" || o.paymentStatus==="cash_accepted" || (o.paymentStatus==="tab_open" && o.status==="pending")) &&
       o.status !== "completed" && o.status !== "delivered"
     ).sort((a, b) => { const rank={pending:0,preparing:1,ready:2}; return (rank[a.status]??3)-(rank[b.status]??3)||a.createdAt-b.createdAt; });
 

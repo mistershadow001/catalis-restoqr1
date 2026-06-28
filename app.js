@@ -2960,8 +2960,7 @@
   // STAFF DASHBOARD — main dashboard
   // ================================================================
   function staffMainView(r) {
-    const isSelfService = r.serviceMode === "self_service";
-    const pendingAlerts = isSelfService ? 0 : state.orders.filter(o => o.restaurantSlug === r.slug && o.waiterRequest && o.status !== "completed").length;
+    const pendingAlerts = state.orders.filter(o => o.restaurantSlug === r.slug && o.waiterRequest && o.status !== "completed").length;
     const activeKitchen = state.orders.filter(o => o.restaurantSlug === r.slug && (o.paymentStatus==="paid"||o.paymentStatus==="cash_sent"||o.paymentStatus==="cash_accepted") && o.status !== "completed" && o.status !== "delivered").length;
     const activeOrders  = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed").length;
 
@@ -3310,7 +3309,7 @@
   function staffKitchenView(r) {
     const orders = state.orders.filter(o =>
       o.restaurantSlug === r.slug &&
-      (o.paymentStatus==="paid" || o.paymentStatus==="cash_sent" || o.paymentStatus==="cash_accepted" || (o.paymentStatus==="tab_open" && o.status==="pending")) &&
+      (o.paymentStatus==="paid" || o.paymentStatus==="cash_sent" || o.paymentStatus==="cash_accepted") &&
       o.status !== "completed" && o.status !== "delivered"
     ).sort((a, b) => { const rank={pending:0,preparing:1,ready:2}; return (rank[a.status]??3)-(rank[b.status]??3)||a.createdAt-b.createdAt; });
 
@@ -3341,7 +3340,6 @@
   // STAFF DASHBOARD — billing view
   // ================================================================
   function staffBillingView(r) {
-    const isSelfService = r.serviceMode === "self_service";
     const active = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
     const tableMap = {};
     active.forEach(o => { if(!tableMap[o.table]) tableMap[o.table]=[]; tableMap[o.table].push(o); });
@@ -3355,13 +3353,10 @@
       const anyWaiting = orders.some(o=>o.paymentStatus==="waiting");
       const anyCashPending = orders.some(o=>o.paymentStatus==="cash_pending");
       const anyCashSent = orders.some(o=>o.paymentStatus==="cash_sent");
-      const anyTabOpen = orders.some(o=>o.paymentStatus==="tab_open");
-      const pendingCounterIds = orders.filter(o=>o.paymentStatus==="tab_open"&&o.status==="pending_counter").map(o=>o.id).join(",");
       const orderIds = orders.map(o=>o.id).join(",");
       const waitingIds = orders.filter(o=>o.paymentStatus==="waiting").map(o=>o.id).join(",");
       const cashPendingIds = orders.filter(o=>o.paymentStatus==="cash_pending").map(o=>o.id).join(",");
       const cashSentIds = orders.filter(o=>o.paymentStatus==="cash_sent").map(o=>o.id).join(",");
-      const tabOpenIds = orders.filter(o=>o.paymentStatus==="tab_open").map(o=>o.id).join(",");
 
       const merged = [];
       orders.forEach(o => {
@@ -3369,25 +3364,20 @@
         (o.addons||[]).forEach(a=>{ const e=merged.find(x=>x._aid===a.id); if(e) e.qty+=(a.qty||1); else merged.push({id:"a_"+a.id,_aid:a.id,name:"+ "+a.name,price:a.price,qty:a.qty||1}); });
       });
 
-      const hasPendingCounter = pendingCounterIds.length > 0;
-      const borderColor = allPaid?"#27ae60":anyCashSent?"#2980b9":hasPendingCounter?"#e67e22":"#c4a96a";
+      const borderColor = allPaid?"#27ae60":anyCashSent?"#2980b9":anyCashPending?"#c4a96a":"#c4a96a";
       const statusLabel = allPaid?`<span class="spill green">✓ Paid</span>`
-        :hasPendingCounter?`<span class="spill amber">⏳ Awaiting Start</span>`
-        :anyTabOpen?`<span class="spill blue">🍳 Tab Open</span>`
-        :anyCashSent?`<span class="spill blue">In Kitchen</span>`
-        :anyCashPending?`<span class="spill amber">Cash pending</span>`
-        :`<span class="spill amber">Payment check</span>`;
+        :anyCashSent?`<span class="spill blue">🍳 In Kitchen</span>`
+        :anyCashPending?`<span class="spill amber">💵 Cash Pending</span>`
+        :`<span class="spill amber">⏳ Payment Check</span>`;
 
       return `<div class="s-order-card" style="border-left:4px solid ${borderColor}">
         <div class="oc-head"><div><div class="oc-table">Table ${table}</div><div class="oc-id">${orders.length} order${orders.length>1?"s":""} · since ${new Date(orders[0].createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div></div>${statusLabel}</div>
         <div class="oc-items">${merged.map(i=>`<div class="oc-item-row"><span>${esc(i.name)} × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join("")}</div>
         <div class="oc-total"><span>Total</span><span>${money(grandTotal)}</span></div>
         <div class="oc-actions">
-          ${hasPendingCounter?`<button class="sbtn ok" data-action="staff-start-tab-order" data-ids="${pendingCounterIds}">✅ Start Order</button>`:""}
           ${anyWaiting?`<button class="sbtn ok" data-action="staff-confirm-upi" data-ids="${waitingIds}">✓ UPI Paid</button>`:""}
           ${anyCashPending?`<button class="sbtn primary" data-action="staff-send-cash-kitchen" data-ids="${cashPendingIds}">🍳 Send to Kitchen</button>`:""}
           ${anyCashSent?`<button class="sbtn ok" data-action="staff-confirm-cash" data-ids="${cashSentIds}">💵 Cash Received</button>`:""}
-          ${anyTabOpen&&!hasPendingCounter?`<button class="sbtn ok" data-action="staff-collect-tab-payment" data-ids="${tabOpenIds}" data-slug="${r.slug}">💵 Collect Payment</button>`:""}
           ${allPaid?`<button class="sbtn danger" data-action="staff-close-table" data-ids="${orderIds}">🔒 Close Table</button>`:""}
           <button class="sbtn plain" data-action="print-table-bill" data-ids="${orderIds}">🧾 Bill</button>
         </div>
@@ -3451,24 +3441,26 @@
         </div>
         <div class="field">
           <label>Service Mode</label>
-          <div style="display:inline-flex;border-radius:12px;overflow:hidden;border:2px solid #e8dcc8;background:#faf5ec;margin-top:4px">
+          <div style="display:inline-flex;align-items:center;background:#f0e8dc;border-radius:999px;padding:3px;gap:2px;margin-top:6px;border:1.5px solid #e0d0bc">
             <button data-action="set-service-mode" data-slug="${r.slug}" data-mode="served"
-              style="padding:10px 20px;font-size:13px;font-weight:700;border:none;cursor:pointer;transition:all .18s;
+              style="padding:7px 18px;font-size:12.5px;font-weight:700;border:none;cursor:pointer;border-radius:999px;transition:all .18s;letter-spacing:.01em;
               background:${(r.serviceMode||"served")==="served"?"#8b4513":"transparent"};
-              color:${(r.serviceMode||"served")==="served"?"#fff":"#8b4513"};">
+              color:${(r.serviceMode||"served")==="served"?"#fff":"#7a5a38"};
+              box-shadow:${(r.serviceMode||"served")==="served"?"0 2px 8px rgba(139,69,19,.3)":"none"}">
               🍽 Served
             </button>
             <button data-action="set-service-mode" data-slug="${r.slug}" data-mode="self_service"
-              style="padding:10px 20px;font-size:13px;font-weight:700;border:none;cursor:pointer;transition:all .18s;
+              style="padding:7px 18px;font-size:12.5px;font-weight:700;border:none;cursor:pointer;border-radius:999px;transition:all .18s;letter-spacing:.01em;
               background:${r.serviceMode==="self_service"?"#8b4513":"transparent"};
-              color:${r.serviceMode==="self_service"?"#fff":"#8b4513"};">
+              color:${r.serviceMode==="self_service"?"#fff":"#7a5a38"};
+              box-shadow:${r.serviceMode==="self_service"?"0 2px 8px rgba(139,69,19,.3)":"none"}">
               🛎 Self-Service
             </button>
           </div>
           <p class="muted small" style="margin:6px 0 0">
             ${(r.serviceMode||"served")==="served"
-              ? "Waiter brings food to table. Customer pays before kitchen starts."
-              : "Customer collects at counter. Counter confirms order, customer pays when done."}
+              ? "Waiter brings food to the table. Customer pays before kitchen starts."
+              : "Customer collects at counter. Customer pays at billing before kitchen starts."}
           </p>
         </div>
         ${firebaseMode ? `
@@ -3815,7 +3807,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     }, 0);
     const grand = total + addonTotal;
     const selectedAddonList = Object.entries(selectedAddons).map(([id, qty]) => { const a = find(r.addons, id); return a ? {...a, qty} : null; }).filter(Boolean);
-    const isSelfService = r.serviceMode === "self_service";
 
     return `<div class="cart-bar" style="position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;flex-direction:column;max-height:55vh;box-shadow:0 -4px 24px rgba(0,0,0,0.12);">
 
@@ -3831,10 +3822,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
 
         <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 8px;box-sizing:border-box"></textarea>
 
-        ${isSelfService ? `
-        <div style="background:#f0f7ff;border:1.5px solid #b3d4f7;border-radius:10px;padding:12px 14px;margin-bottom:8px;font-size:13px;color:#1a4a7a">
-          🛎 <strong>Self-Service</strong> — Place your order and show your token at the counter. Pay when you collect your food.
-        </div>` : `
         <p class="muted small" style="margin-bottom:8px">
           Pay <strong>${money(grand)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong>
         </p>
@@ -3857,12 +3844,12 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
             style="background:#f5f0e8;border:1.5px solid #c4a96a;color:#7a5c1e;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;padding:13px">
             💵 I'll Pay in Cash at Counter
           </button>
-        </div>`}
+        </div>
       </div>
 
       <div style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">
-        <button class="btn primary block" data-action="${isSelfService ? "place-order-cash" : "place-order"}" data-slug="${r.slug}">
-          ${isSelfService ? "✓ Place Order" : "✓ I Paid · Confirm Order"}
+        <button class="btn primary block" data-action="place-order" data-slug="${r.slug}">
+          ✓ I Paid · Confirm Order
         </button>
       </div>
 
@@ -3930,14 +3917,12 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         </div>
 
         <p style="text-align:center;font-size:13px;color:var(--muted,#6b7280);margin:0 0 16px">
-          ${o.paymentStatus === "tab_open" && o.status === "pending_counter" ? "⏳ Waiting for counter to confirm your order…" :
-            o.paymentStatus === "tab_open" ? "🍳 Your order is being prepared! Pay at counter when done." :
-            o.paymentStatus === "cash_pending" ? "💵 Please pay cash at the billing counter. Waiting for counter..." :
+          ${o.paymentStatus === "cash_pending" ? "💵 Please pay cash at the billing counter. Waiting for counter..." :
             o.paymentStatus === "cash_sent" ? "✅ Counter sent your order to kitchen! Please pay cash when served." :
             o.paymentStatus === "cash_accepted" ? "✅ Cash received. Enjoy your meal!" :
             o.paymentStatus === "waiting" ? "⏳ Waiting for payment verification by counter..." :
             o.status === "preparing" ? "👨‍🍳 Your food is being prepared!" :
-            o.status === "ready" ? (r.serviceMode === "self_service" ? "🛎 Your order is ready! Please collect at the counter." : "🛎 Your order is ready! Will be served shortly.") : "✅ Payment verified. Order confirmed!"}
+            o.status === "ready" ? "🛎 Your order is ready! Will be served shortly." : "✅ Payment verified. Order confirmed!"}
         </p>
 
         <button class="btn block" style="width:100%;margin-bottom:10px" data-action="refresh-order" data-slug="${r.slug}">↻ Refresh Status</button>
@@ -4777,24 +4762,23 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         });
         o.total = o.items.reduce((s, i) => s + i.price * i.qty, 0) +
                   (o.addons || []).reduce((s, a) => s + a.price * (a.qty || 1), 0);
-        o.paymentStatus = r.serviceMode === "self_service" ? "tab_open" : "waiting";
+        o.paymentStatus = "waiting";
       });
       localStorage.setItem("restoqr_last_order_" + slug, existingOrder.id);
-      toast(r.serviceMode === "self_service" ? "Items added! Counter will start your order." : "Items added to your order! Waiting for payment verification.");
+      toast("Items added to your order! Waiting for payment verification.");
     } else {
       const total = newItems.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
       const orderId = uid();
-      const isSelfService = r.serviceMode === "self_service";
       mutate(s => s.orders.push({
         id: orderId, restaurantSlug: slug, table, items: newItems,
         addons: pickedAddons,
         note: val("order-note"), total,
-        paymentStatus: isSelfService ? "tab_open" : "waiting",
-        status: isSelfService ? "pending_counter" : "payment_check",
+        paymentStatus: "waiting",
+        status: "payment_check",
         createdAt: Date.now()
       }));
       localStorage.setItem("restoqr_last_order_" + slug, orderId);
-      toast(isSelfService ? "Order placed! Counter will confirm and start your order." : "Order placed! Waiting for payment verification.");
+      toast("Order placed! Waiting for payment verification.");
     }
 
     cart = {};
@@ -4845,24 +4829,23 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         });
         o.total = o.items.reduce((s, i) => s + i.price * i.qty, 0) +
                   (o.addons || []).reduce((s, a) => s + a.price * (a.qty || 1), 0);
-        o.paymentStatus = r.serviceMode === "self_service" ? "tab_open" : "cash_pending";
+        o.paymentStatus = "cash_pending";
       });
       localStorage.setItem("restoqr_last_order_" + slug, existingOrder.id);
-      toast(r.serviceMode === "self_service" ? "Items added! Counter will start your order." : "Items added to your order! Counter will accept your payment.");
+      toast("Items added to your order! Counter will accept your payment.");
     } else {
       const total = newItems.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
       const orderId = uid();
-      const isSelfService = r.serviceMode === "self_service";
       mutate(s => s.orders.push({
         id: orderId, restaurantSlug: slug, table, items: newItems,
         addons: pickedAddons,
         note: val("order-note"), total,
-        paymentStatus: isSelfService ? "tab_open" : "cash_pending",
-        status: isSelfService ? "pending_counter" : "payment_check",
+        paymentStatus: "cash_pending",
+        status: "payment_check",
         createdAt: Date.now()
       }));
       localStorage.setItem("restoqr_last_order_" + slug, orderId);
-      toast(isSelfService ? "Order placed! Counter will confirm and start your order." : "Cash order placed! Counter will accept your payment.");
+      toast("Cash order placed! Counter will accept your payment.");
     }
 
     cart = {};

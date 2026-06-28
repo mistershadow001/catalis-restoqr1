@@ -1865,7 +1865,7 @@
       </section>
       <section class="grid-3" style="margin-top:14px">
         ${r.tables.map(t => {
-          const link = `${base}#/order?resto=${r.slug}&table=${t.no}`;
+          const link = `${base}#/order?resto=${r.slug}&t=${encodeTableToken(r.slug, t.no)}`;
           const qr = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(link)}`;
           return `<div class="card">
             <div class="section-head"><div><h3>Table ${t.no}</h3><p>${t.seats} seats</p></div><button class="btn bad" data-action="delete-table" data-slug="${r.slug}" data-table="${t.no}">Delete</button></div>
@@ -3693,7 +3693,20 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (!isRestaurantOpen(r)) {
       return customerShell(r.name, `<div class="empty">Ordering is currently unavailable. Please contact the counter.</div>`);
     }
-    const table = Number(params.get("table")) || "";
+    // Per-table QR codes now carry an encoded/checksummed token (?t=...)
+    // rather than a plain ?table=N — decodeTableToken returns null if it's
+    // missing, malformed, or doesn't match this restaurant, so a tampered
+    // value is never trusted as a locked table.
+    const decodedTable = params.get("t") ? decodeTableToken(slug, params.get("t")) : null;
+    // Legacy fallback for any QR codes printed before this change — still
+    // honored as a starting value, but NOT locked, since a plain number in
+    // the URL can be trivially edited.
+    const legacyTable = Number(params.get("table")) || "";
+    const table = decodedTable || legacyTable;
+    // If the table number arrived via a verified token (i.e. the customer
+    // scanned a per-table QR), lock it so it can't be edited or swapped to
+    // another table — that's the whole point of printing one QR per table.
+    const tableLocked = !!decodedTable;
     const lastOrder = state.orders.find(o => o.id === localStorage.getItem("restoqr_last_order_" + r.slug));
     // Once the kitchen marks the order delivered (or billing later closes it), show the
     // completed/review screen instead of the live tracking view.
@@ -3723,7 +3736,9 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         <div class="customer-head"><p>${esc(r.name)}</p><h1>Table Ordering</h1></div>
         <div style="padding:12px 14px;border-bottom:1px solid var(--line)" class="row">
           <span class="muted">Table number</span>
-          <input class="table-box" id="customer-table" value="${table}" type="number" min="1">
+          ${tableLocked
+            ? `<span class="table-box" title="Table number is fixed by this table's QR code" style="display:inline-flex;align-items:center;gap:6px;font-weight:700;background:var(--bg,#f9f5ef);border:1.5px solid var(--line,#e5e7eb);border-radius:8px;padding:8px 16px;color:var(--text,#1a1a1a)">🔒 ${table}</span><input type="hidden" id="customer-table" value="${table}">`
+            : `<input class="table-box" id="customer-table" value="${table}" type="number" min="1">`}
         </div>
         ${lastOrder && (lastOrder.status === "completed" || lastOrder.status === "delivered") ? customerStatusCard(r, lastOrder) : ""}
         ${customerMenuSearchBar(searchQuery)}
@@ -5072,6 +5087,38 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
   function days(n) { return n * 24 * 60 * 60 * 1000; }
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
   function slugify(s) { return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 38) || uid(); }
+
+  // ---- Per-table QR token encode/decode ---------------------------------
+  // A per-table QR link carries an opaque token (?t=...) instead of a plain
+  // ?table=5 — so a customer can't just edit a digit in the address bar and
+  // land on a different table's bill. The token bakes the table number
+  // together with a checksum tied to the restaurant slug; decodeTableToken
+  // returns null if anything was tampered with, and the caller falls back
+  // to treating the table as unset (manual entry) rather than trusting it.
+  // Note: since this all runs in the customer's browser, a sufficiently
+  // determined person could still read this code and forge a token — this
+  // raises the bar from "edit one digit in the URL" to "reverse-engineer
+  // the checksum", it isn't a server-verified guarantee.
+  const TABLE_TOKEN_SALT = "rqr-table-v1";
+  function tableTokenChecksum(slug, no) {
+    const str = String(slug) + ":" + String(no) + ":" + TABLE_TOKEN_SALT;
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+    return h.toString(36).slice(0, 6);
+  }
+  function encodeTableToken(slug, no) {
+    return btoa(no + "." + tableTokenChecksum(slug, no)).replace(/=+$/, "");
+  }
+  function decodeTableToken(slug, token) {
+    try {
+      const [noStr, sum] = atob(token).split(".");
+      const no = Number(noStr);
+      if (!no || sum !== tableTokenChecksum(slug, no)) return null;
+      return no;
+    } catch (e) {
+      return null;
+    }
+  }
   function title(s) { return s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()); }
   function clone(x) { return JSON.parse(JSON.stringify(x)); }
   function unique(a) { return [...new Set(a.filter(Boolean))]; }

@@ -1839,7 +1839,7 @@
             <img src="${mainQr}" alt="${esc(r.name)} QR" style="width:220px;max-width:100%;border:1px solid var(--line);border-radius:8px;background:#fff">
             <input value="${mainLink}" readonly style="margin-top:10px">
             <div class="row-left" style="margin-top:10px;flex-wrap:wrap">
-              <button class="btn primary" data-action="print-qr">Print QR</button>
+              <button class="btn primary" data-action="print-qr" data-slug="${r.slug}">🖨 Print QR Cards</button>
               <a class="btn blue" target="_blank" rel="noopener" href="${mainQr}">Save QR Image</a>
             </div>
           </div>
@@ -1867,10 +1867,14 @@
         ${r.tables.map(t => {
           const link = `${base}#/order?resto=${r.slug}&t=${encodeTableToken(r.slug, t.no)}`;
           const qr = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(link)}`;
-          return `<div class="card">
+          const qrHigh = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(link)}`;
+          return `<div class="card qr-table-card" data-table="${t.no}">
             <div class="section-head"><div><h3>Table ${t.no}</h3><p>${t.seats} seats</p></div><button class="btn bad" data-action="delete-table" data-slug="${r.slug}" data-table="${t.no}">Delete</button></div>
             <img src="${qr}" alt="Table ${t.no} QR" style="width:100%;max-width:190px;border:1px solid var(--line);border-radius:8px">
             <input value="${link}" readonly style="margin-top:10px">
+            <div class="row-left" style="margin-top:10px;flex-wrap:wrap;gap:8px">
+              <a class="btn blue" href="${qrHigh}" download="table-${t.no}-qr.png" target="_blank" rel="noopener">⬇ Download QR</a>
+            </div>
           </div>`;
         }).join("")}
       </section>`;
@@ -2040,22 +2044,26 @@
       : anyCashPending ? "💵 Cash – Awaiting"
       : "⏳ Check Payment";
 
-    // Merge all items across orders for the combined view
-    const mergedItems = [];
-    orders.forEach(o => {
-      (o.items || []).forEach(i => {
-        const existing = mergedItems.find(x => x.id === i.id);
-        if (existing) existing.qty += i.qty;
-        else mergedItems.push({ ...i });
-      });
-      (o.addons || []).forEach(a => {
-        const existing = mergedItems.find(x => x.name === "+ " + a.name);
-        if (existing) existing.qty += (a.qty || 1);
-        else mergedItems.push({ id: "addon_" + a.id, name: "+ " + a.name, price: a.price, qty: a.qty || 1 });
-      });
-    });
-
     const orderIds = orders.map(o => o.id).join(",");
+
+    // Render items per-order so we know which order to mutate on cancel
+    function renderOrderItems(o) {
+      const canCancel = o.paymentStatus === "waiting" || o.paymentStatus === "cash_pending";
+      const cancelNote = canCancel ? "" : `<p style="margin:4px 0 0;font-size:11px;color:var(--muted,#9ca3af)">Items cannot be removed after order is sent to kitchen.</p>`;
+      const itemRows = (o.items || []).map(i => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#f3f4f6)">
+          <span style="font-size:13px;flex:1">${esc(i.name)} <span style="color:var(--muted,#9ca3af)">× ${i.qty}</span></span>
+          <span style="font-size:13px;font-weight:500;margin-right:${canCancel ? "10px" : "0"}">${money(i.price * i.qty)}</span>
+          ${canCancel ? `<button title="Remove item" data-action="cancel-item" data-order-id="${o.id}" data-item-id="${i.id}" data-addon="0" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px;font-weight:700;line-height:1;padding:0 2px">✕</button>` : ""}
+        </div>`).join("");
+      const addonRows = (o.addons || []).map(a => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#f3f4f6)">
+          <span style="font-size:13px;flex:1;color:var(--muted,#6b7280)">+ ${esc(a.name)} <span style="color:var(--muted,#9ca3af)">× ${a.qty || 1}</span></span>
+          <span style="font-size:13px;font-weight:500;margin-right:${canCancel ? "10px" : "0"}">${money(a.price * (a.qty || 1))}</span>
+          ${canCancel ? `<button title="Remove add-on" data-action="cancel-item" data-order-id="${o.id}" data-item-id="${a.id}" data-addon="1" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:16px;font-weight:700;line-height:1;padding:0 2px">✕</button>` : ""}
+        </div>`).join("");
+      return itemRows + addonRows + cancelNote;
+    }
 
     return `<div class="list-item" style="border-left:3px solid ${allPaid ? "var(--ok,#2e7d32)" : anyCashSent ? "#1a73e8" : "#c4a96a"}">
       <div class="row">
@@ -2075,24 +2083,19 @@
       </div>
 
       <div style="margin-top:10px">
-        ${mergedItems.map(i => `
-          <div class="row small">
-            <span>${esc(i.name)} × ${i.qty}</span>
-            <span>${money(i.price * i.qty)}</span>
-          </div>`).join("")}
+        ${orders.length === 1
+          ? renderOrderItems(orders[0])
+          : orders.map((o, idx) => {
+              const statusLabel = o.paymentStatus === "paid" ? "UPI Paid" : o.paymentStatus === "cash_accepted" ? "Cash Received" : o.paymentStatus === "cash_sent" ? "In Kitchen" : o.paymentStatus === "cash_pending" ? "Cash Pending" : "Pending";
+              const staffTag = o.closedBy ? ` · 🔒 ${esc(o.closedBy.name)}` : o.upiConfirmedBy ? ` · ✅ ${esc(o.upiConfirmedBy.name)}` : o.cashConfirmedBy ? ` · 💵 ${esc(o.cashConfirmedBy.name)}` : "";
+              return `<div style="margin-bottom:${idx < orders.length-1 ? "10px" : "0"};padding:8px;background:var(--bg,#f9f5ef);border-radius:8px">
+                <p style="margin:0 0 6px;font-size:11px;font-weight:700;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">#${o.id.slice(-5).toUpperCase()} · ${statusLabel}${staffTag}</p>
+                ${renderOrderItems(o)}
+                <p style="margin:6px 0 0;font-size:12px;font-weight:600;text-align:right;color:var(--text,#1a1a1a)">Subtotal: ${money(o.total)}</p>
+              </div>`;
+            }).join("")
+        }
       </div>
-
-      ${orders.length > 1 ? `
-        <div style="margin-top:8px;padding:8px;background:var(--bg,#f9f5ef);border-radius:8px">
-          <p style="margin:0 0 4px;font-size:11px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">Individual Orders</p>
-          ${orders.map(o => {
-            const staffTag = o.closedBy ? ` · 🔒 ${esc(o.closedBy.name)}`
-              : o.upiConfirmedBy ? ` · ✅ ${esc(o.upiConfirmedBy.name)}`
-              : o.cashConfirmedBy ? ` · 💵 ${esc(o.cashConfirmedBy.name)}`
-              : "";
-            return `<p style="margin:2px 0;font-size:12px;color:var(--muted,#6b7280)">#${o.id.slice(-5).toUpperCase()} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · ${money(o.total)} · <span style="color:${o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted"?"var(--ok)":"#b5790c"}">${o.paymentStatus==="paid"?"UPI Paid":o.paymentStatus==="cash_accepted"?"Cash Received":o.paymentStatus==="cash_sent"?"In Kitchen":o.paymentStatus==="cash_pending"?"Cash Pending":"Pending"}</span><span style="color:#a89880">${staffTag}</span></p>`;
-          }).join("")}
-        </div>` : ""}
 
       <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <strong style="font-size:16px">Total ${money(grandTotal)}</strong>
@@ -2102,6 +2105,7 @@
           ${anyCashSent ? `<button class="btn ok" data-action="cash-received-table" data-ids="${cashSentIds}">💵 Cash Received</button>` : ""}
           ${allPaid ? `<button class="btn bad" data-action="close-table" data-ids="${orderIds}">Close Table</button>` : ""}
           <button class="btn" data-action="print-table-bill" data-ids="${orderIds}">🧾 Print Bill</button>
+          <button class="btn bad" style="background:#fff0f0;border:1.5px solid #f87171;color:#b91c1c;font-weight:600" data-action="cancel-table" data-ids="${orderIds}" data-table="${table}">✕ Cancel Order</button>
         </div>
       </div>
     </div>`;
@@ -3916,18 +3920,25 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
 
         <div style="background:var(--card,#fff);border:1px solid var(--line,#e5e7eb);border-radius:12px;padding:14px;margin-bottom:14px">
           <p style="margin:0 0 10px;font-weight:600;font-size:14px">Your Order</p>
-          ${(o.items || []).map(i => `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line,#f3f4f6)">
-              <span style="font-size:14px">${esc(i.name)} <span style="color:var(--muted,#6b7280)">× ${i.qty}</span></span>
-              <span style="font-size:14px;font-weight:500">${money(i.price * i.qty)}</span>
-            </div>`).join("")}
-          ${(o.addons || []).length ? `
-            <p style="margin:10px 0 6px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
-            ${o.addons.map(a => `
+          ${(() => {
+            const canCancelItems = o.paymentStatus === "waiting" || o.paymentStatus === "cash_pending";
+            const cancelHint = canCancelItems ? `<p style="margin:0 0 8px;font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 10px">⚠ Tap ✕ to remove an item before it's sent to the kitchen.</p>` : "";
+            const itemRows = (o.items || []).map(i => `
               <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line,#f3f4f6)">
-                <span style="font-size:14px">+ ${esc(a.name)}</span>
-                <span style="font-size:14px;font-weight:500">${money(a.price)}</span>
-              </div>`).join("")}` : ""}
+                <span style="font-size:14px;flex:1">${esc(i.name)} <span style="color:var(--muted,#6b7280)">× ${i.qty}</span></span>
+                <span style="font-size:14px;font-weight:500;margin-right:${canCancelItems ? "10px" : "0"}">${money(i.price * i.qty)}</span>
+                ${canCancelItems ? `<button title="Remove item" data-action="cancel-item" data-order-id="${o.id}" data-item-id="${i.id}" data-addon="0" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:18px;font-weight:700;line-height:1;padding:0 2px">✕</button>` : ""}
+              </div>`).join("");
+            const addonRows = (o.addons || []).length ? `
+              <p style="margin:10px 0 6px;font-size:12px;font-weight:600;color:var(--muted,#6b7280);text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
+              ${o.addons.map(a => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line,#f3f4f6)">
+                  <span style="font-size:14px;flex:1">+ ${esc(a.name)}</span>
+                  <span style="font-size:14px;font-weight:500;margin-right:${canCancelItems ? "10px" : "0"}">${money(a.price)}</span>
+                  ${canCancelItems ? `<button title="Remove add-on" data-action="cancel-item" data-order-id="${o.id}" data-item-id="${a.id}" data-addon="1" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:18px;font-weight:700;line-height:1;padding:0 2px">✕</button>` : ""}
+                </div>`).join("")}` : "";
+            return cancelHint + itemRows + addonRows;
+          })()}
           ${o.note ? `<p style="margin:10px 0 0;font-size:13px;color:var(--muted,#6b7280)">📝 ${esc(o.note)}</p>` : ""}
           <div style="display:flex;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:2px solid var(--line,#e5e7eb)">
             <span style="font-weight:700">Total</span>
@@ -4177,6 +4188,108 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     setTimeout(() => document.body.classList.remove("printing-receipt"), 3000);
   }
 
+  function printQrCardSheet(r) {
+    const base = location.href.split("#")[0];
+    // Build all cards: main QR + per-table QRs
+    const allCards = [];
+
+    // Main restaurant QR (no specific table)
+    const mainLink = base + "#/order?resto=" + r.slug;
+    const mainQrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=" + encodeURIComponent(mainLink);
+    allCards.push({ table: null, qrUrl: mainQrUrl });
+
+    // Per-table QRs
+    (r.tables || []).forEach(t => {
+      const link = base + "#/order?resto=" + r.slug + "&t=" + encodeTableToken(r.slug, t.no);
+      const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=" + encodeURIComponent(link);
+      allCards.push({ table: t.no, qrUrl: qrUrl });
+    });
+
+    const cardHtml = allCards.map(c => {
+      const tableLabel = c.table !== null ? "Table " + c.table : "All Tables";
+      return `<div class="qr-print-card">
+        <div class="qr-print-name">${esc(r.name)}</div>
+        <div class="qr-print-table">${tableLabel}</div>
+        <img src="${c.qrUrl}" class="qr-print-img" alt="QR ${tableLabel}">
+        <div class="qr-print-msg">📱 Scan to Order</div>
+      </div>`;
+    }).join("");
+
+    const win = window.open("", "_blank", "width=800,height=900");
+    if (!win) { toast("Popup blocked — please allow popups and try again."); return; }
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR Cards – ${esc(r.name)}</title><style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { background: #fff; font-family: 'Segoe UI', Arial, sans-serif; }
+      .qr-print-page {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0;
+        width: 210mm;
+        margin: 0 auto;
+      }
+      .qr-print-card {
+        width: 70mm;
+        height: 98.5mm;
+        padding: 10mm 8mm 8mm;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: space-between;
+        border: 1px dashed #c0b8ae;
+        background: #fff;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      .qr-print-name {
+        font-size: 12pt;
+        font-weight: 800;
+        color: #1c0e04;
+        text-align: center;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+      }
+      .qr-print-table {
+        font-size: 17pt;
+        font-weight: 900;
+        color: #c24a00;
+        text-align: center;
+        margin-top: 3mm;
+        letter-spacing: 0.02em;
+      }
+      .qr-print-img {
+        width: 48mm;
+        height: 48mm;
+        object-fit: contain;
+        margin: 4mm 0;
+        display: block;
+        border: 1px solid #e5e7eb;
+        border-radius: 4px;
+      }
+      .qr-print-msg {
+        font-size: 11pt;
+        font-weight: 700;
+        color: #374151;
+        text-align: center;
+        letter-spacing: 0.03em;
+      }
+      @media print {
+        @page { size: A4 portrait; margin: 5mm; }
+        body { margin: 0; }
+        .qr-print-page { width: 100%; }
+        .qr-print-card { border-color: #bbb; }
+        .no-print { display: none !important; }
+      }
+    </style></head><body>
+    <div class="no-print" style="padding:14px 20px;background:#f9f5ef;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:14px">
+      <strong style="font-size:15px">QR Cards — ${esc(r.name)}</strong>
+      <span style="color:#6b7280;font-size:13px">3 cards per row · A4 print ready</span>
+      <button onclick="window.print()" style="margin-left:auto;padding:8px 20px;background:#c24a00;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">🖨 Print</button>
+    </div>
+    <div class="qr-print-page">${cardHtml}</div>
+    </body></html>`);
+    win.document.close();
+  }
+
   function orderLines(o) {
     return `
       <div style="margin-top:10px">
@@ -4248,7 +4361,13 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (action === "common-items-tab") return commonItemsTab = el.dataset.tab, render();
     if (action === "analytics-period") { window._analyticsPeriod = el.dataset.period; if (el.dataset.period === "day") window._analyticsDayOffset = 0; if (el.dataset.period === "week") window._analyticsWeekOffset = 0; return render(); }
     if (action === "analytics-nav") { var dir = Number(el.dataset.dir); var p = window._analyticsPeriod || "month"; if (p === "day") window._analyticsDayOffset = (window._analyticsDayOffset || 0) + dir; if (p === "week") window._analyticsWeekOffset = (window._analyticsWeekOffset || 0) + dir; return render(); }
-    if (action === "print-qr") return window.print();
+    if (action === "print-qr") {
+      const slug = el.dataset.slug;
+      const resto = bySlug(slug);
+      if (!resto) return window.print();
+      printQrCardSheet(resto);
+      return;
+    }
     if (action === "add-item") return addMenuItem(el.dataset.slug);
     if (action === "add-common") return addCommonItem(el.dataset.slug, Number(el.dataset.index), el.dataset.source);
     if (action === "update-price") return updateRestaurant(el.dataset.slug, r => { const found = find(r.menu, el.dataset.id); if (found) found.price = Number(val("price-" + el.dataset.id)) || found.price; });
@@ -4322,6 +4441,39 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (action === "close-table") {
       const ids = el.dataset.ids.split(",").filter(Boolean);
       return mutate(s => ids.forEach(id => { const o = s.orders.find(x => x.id === id); if (o) o.status = "completed"; }));
+    }
+    if (action === "cancel-item") {
+      const orderId = el.dataset.orderId;
+      const itemId = el.dataset.itemId;
+      const isAddon = el.dataset.addon === "1";
+      mutate(s => {
+        const o = s.orders.find(x => x.id === orderId);
+        if (!o) return;
+        // Only allow before kitchen
+        if (o.paymentStatus !== "waiting" && o.paymentStatus !== "cash_pending") return;
+        if (isAddon) {
+          o.addons = (o.addons || []).filter(a => a.id !== itemId);
+        } else {
+          o.items = (o.items || []).filter(i => i.id !== itemId);
+        }
+        // Recalculate total
+        o.total = (o.items || []).reduce((s, i) => s + i.price * i.qty, 0) +
+                  (o.addons || []).reduce((s, a) => s + a.price * (a.qty || 1), 0);
+        // If all items removed, remove the whole order
+        if (!o.items.length && !(o.addons || []).length) {
+          s.orders = s.orders.filter(x => x.id !== orderId);
+          toast("All items removed — order cancelled.");
+        } else {
+          toast("Item removed.");
+        }
+      });
+      return;
+    }
+    if (action === "cancel-table") {
+      const ids = el.dataset.ids.split(",").filter(Boolean);
+      const tableNo = el.dataset.table;
+      if (!confirm("Cancel all orders for Table " + tableNo + "? This will remove them from the billing counter.")) return;
+      return mutate(s => { s.orders = s.orders.filter(o => !ids.includes(o.id)); });
     }
     if (action === "reprint-bill") return printReceipt(el.dataset.id);
     if (action === "print-table-bill") return printTableBill(el.dataset.ids.split(","));

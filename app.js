@@ -637,7 +637,6 @@
       r.menu = r.menu || [];
       r.addons = r.addons || [];
       r.categories = unique([...(r.categories || []), ...r.menu.map(i => i.category)]);
-      r.selfServe = r.selfServe || false;
     });
     return next;
   }
@@ -2931,7 +2930,7 @@
   // ================================================================
   function staffMainView(r) {
     const pendingAlerts = state.orders.filter(o => o.restaurantSlug === r.slug && o.waiterRequest && o.status !== "completed").length;
-    const activeKitchen = state.orders.filter(o => o.restaurantSlug === r.slug && (o.paymentStatus==="paid"||o.paymentStatus==="cash_sent"||o.paymentStatus==="cash_accepted"||o.paymentStatus==="ss_accepted") && o.status !== "completed" && o.status !== "delivered").length;
+    const activeKitchen = state.orders.filter(o => o.restaurantSlug === r.slug && (o.paymentStatus==="paid"||o.paymentStatus==="cash_sent"||o.paymentStatus==="cash_accepted") && o.status !== "completed" && o.status !== "delivered").length;
     const activeOrders  = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed").length;
 
     if (!["kitchen","resto","billing"].includes(staffTab)) staffTab = "kitchen";
@@ -3279,7 +3278,7 @@
   function staffKitchenView(r) {
     const orders = state.orders.filter(o =>
       o.restaurantSlug === r.slug &&
-      (o.paymentStatus==="paid" || o.paymentStatus==="cash_sent" || o.paymentStatus==="cash_accepted" || o.paymentStatus==="ss_accepted") &&
+      (o.paymentStatus==="paid" || o.paymentStatus==="cash_sent" || o.paymentStatus==="cash_accepted") &&
       o.status !== "completed" && o.status !== "delivered"
     ).sort((a, b) => { const rank={pending:0,preparing:1,ready:2}; return (rank[a.status]??3)-(rank[b.status]??3)||a.createdAt-b.createdAt; });
 
@@ -3290,9 +3289,8 @@
       const elapsed = Math.floor((Date.now()-o.createdAt)/60000);
       const borderColor = elapsed>15?"#e74c3c":elapsed>8?"#f39c12":"#27ae60";
       const pill = o.status==="preparing" ? `<span class="spill blue">Preparing</span>` : o.status==="ready" ? `<span class="spill green">Ready</span>` : `<span class="spill amber">Pending</span>`;
-      const tableLabel = o.selfServe ? `🏪 Token #${o.token || o.id.slice(-4).toUpperCase()}` : `Table ${o.table}`;
       return `<div class="s-order-card" style="border-left:4px solid ${borderColor}">
-        <div class="oc-head"><div><div class="oc-table">${tableLabel}</div><div class="oc-id">#${o.id.slice(-5).toUpperCase()} · ${elapsed} min ago</div></div>${pill}</div>
+        <div class="oc-head"><div><div class="oc-table">Table ${o.table}</div><div class="oc-id">#${o.id.slice(-5).toUpperCase()} · ${elapsed} min ago</div></div>${pill}</div>
         <div class="oc-items">
           ${(o.items||[]).map(i=>`<div class="oc-item-row"><span style="font-weight:600">${esc(i.name)} <span style="color:#9a8878">× ${i.qty}</span></span></div>`).join("")}
           ${(o.addons||[]).map(a=>`<div class="oc-item-row" style="color:#9a8878"><span>+ ${esc(a.name)} × ${a.qty||1}</span></div>`).join("")}
@@ -3300,9 +3298,7 @@
         ${o.note?`<div class="oc-note">📝 ${esc(o.note)}</div>`:""}
         <div class="oc-actions">
           ${next==="delivered"
-            ? o.selfServe
-              ? `<button class="sbtn ok" data-action="advance-order" data-id="${o.id}" data-next="${next}">✅ Mark Ready for Pickup</button>`
-              : `<button class="sbtn ok" data-action="advance-order" data-id="${o.id}" data-next="${next}">✅ Mark Served</button>`
+            ?`<button class="sbtn ok" data-action="advance-order" data-id="${o.id}" data-next="${next}">✅ Mark Served</button>`
             :`<button class="sbtn primary" data-action="advance-order" data-id="${o.id}" data-next="${next}">${next==="preparing"?"👨‍🍳 Start Preparing":"🛎 Mark Ready"}</button>`}
         </div>
       </div>`;
@@ -3315,30 +3311,14 @@
   function staffBillingView(r) {
     const active = state.orders.filter(o => o.restaurantSlug === r.slug && o.status !== "completed");
     const tableMap = {};
-    active.forEach(o => {
-      // Self-serve orders grouped by their own id (each order is independent)
-      const key = o.selfServe ? ("ss_" + o.id) : String(o.table);
-      if (!tableMap[key]) tableMap[key] = [];
-      tableMap[key].push(o);
-    });
-    const tableGroups = Object.entries(tableMap).sort((a,b) => {
-      // Self-serve orders sort by time; table orders sort by table number
-      const aIsSS = a[0].startsWith("ss_");
-      const bIsSS = b[0].startsWith("ss_");
-      if (aIsSS && !bIsSS) return -1;
-      if (!aIsSS && bIsSS) return 1;
-      return aIsSS ? a[1][0].createdAt - b[1][0].createdAt : Number(a[0]) - Number(b[0]);
-    });
+    active.forEach(o => { if(!tableMap[o.table]) tableMap[o.table]=[]; tableMap[o.table].push(o); });
+    const tableGroups = Object.entries(tableMap).sort((a,b)=>Number(a[0])-Number(b[0]));
 
-    if (!tableGroups.length) return `<div class="staff-empty"><div class="se-icon">💳</div>No active orders right now</div>`;
+    if (!tableGroups.length) return `<div class="staff-empty"><div class="se-icon">💳</div>No active bills right now</div>`;
 
-    return tableGroups.map(([key, orders]) => {
-      const isSS = key.startsWith("ss_");
-      const o0 = orders[0];
+    return tableGroups.map(([table, orders]) => {
       const grandTotal = orders.reduce((s,o)=>s+o.total,0);
-      const allPaid = orders.every(o=>["paid","cash_accepted","ss_accepted"].includes(o.paymentStatus));
-      const anySSPending = orders.some(o=>o.paymentStatus==="ss_pending");
-      const anySSAccepted = orders.some(o=>o.paymentStatus==="ss_accepted");
+      const allPaid = orders.every(o=>o.paymentStatus==="paid"||o.paymentStatus==="cash_accepted");
       const anyWaiting = orders.some(o=>o.paymentStatus==="waiting");
       const anyCashPending = orders.some(o=>o.paymentStatus==="cash_pending");
       const anyCashSent = orders.some(o=>o.paymentStatus==="cash_sent");
@@ -3346,8 +3326,6 @@
       const waitingIds = orders.filter(o=>o.paymentStatus==="waiting").map(o=>o.id).join(",");
       const cashPendingIds = orders.filter(o=>o.paymentStatus==="cash_pending").map(o=>o.id).join(",");
       const cashSentIds = orders.filter(o=>o.paymentStatus==="cash_sent").map(o=>o.id).join(",");
-      const ssPendingIds = orders.filter(o=>o.paymentStatus==="ss_pending").map(o=>o.id).join(",");
-      const ssAcceptedIds = orders.filter(o=>o.paymentStatus==="ss_accepted").map(o=>o.id).join(",");
 
       const merged = [];
       orders.forEach(o => {
@@ -3355,39 +3333,18 @@
         (o.addons||[]).forEach(a=>{ const e=merged.find(x=>x._aid===a.id); if(e) e.qty+=(a.qty||1); else merged.push({id:"a_"+a.id,_aid:a.id,name:"+ "+a.name,price:a.price,qty:a.qty||1}); });
       });
 
-      let borderColor, statusLabel, titleLabel;
-      if (isSS) {
-        titleLabel = `🏪 Token #${o0.token || o0.id.slice(-4).toUpperCase()}`;
-        if (anySSPending) {
-          borderColor = "#f39c12";
-          statusLabel = `<span class="spill amber">⏳ New Order</span>`;
-        } else if (anySSAccepted) {
-          borderColor = "#2980b9";
-          statusLabel = `<span class="spill blue">🍳 In Kitchen</span>`;
-        } else if (allPaid) {
-          borderColor = "#27ae60";
-          statusLabel = `<span class="spill green">✓ Done</span>`;
-        } else {
-          borderColor = "#c4a96a";
-          statusLabel = `<span class="spill amber">Pending</span>`;
-        }
-      } else {
-        titleLabel = `Table ${o0.table}`;
-        borderColor = allPaid?"#27ae60":anyCashSent?"#2980b9":"#c4a96a";
-        statusLabel = allPaid?`<span class="spill green">✓ Paid</span>`:anyCashSent?`<span class="spill blue">In Kitchen</span>`:anyCashPending?`<span class="spill amber">Cash pending</span>`:`<span class="spill amber">Payment check</span>`;
-      }
+      const borderColor = allPaid?"#27ae60":anyCashSent?"#2980b9":"#c4a96a";
+      const statusLabel = allPaid?`<span class="spill green">✓ Paid</span>`:anyCashSent?`<span class="spill blue">In Kitchen</span>`:anyCashPending?`<span class="spill amber">Cash pending</span>`:`<span class="spill amber">Payment check</span>`;
 
       return `<div class="s-order-card" style="border-left:4px solid ${borderColor}">
-        <div class="oc-head"><div><div class="oc-table">${titleLabel}</div><div class="oc-id">${orders.length} order${orders.length>1?"s":""} · since ${new Date(o0.createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div></div>${statusLabel}</div>
+        <div class="oc-head"><div><div class="oc-table">Table ${table}</div><div class="oc-id">${orders.length} order${orders.length>1?"s":""} · since ${new Date(orders[0].createdAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div></div>${statusLabel}</div>
         <div class="oc-items">${merged.map(i=>`<div class="oc-item-row"><span>${esc(i.name)} × ${i.qty}</span><span>${money(i.price*i.qty)}</span></div>`).join("")}</div>
         <div class="oc-total"><span>Total</span><span>${money(grandTotal)}</span></div>
         <div class="oc-actions">
-          ${anySSPending?`<button class="sbtn primary" data-action="staff-accept-selfserve" data-ids="${ssPendingIds}">✅ Accept & Send to Kitchen</button>`:""}
-          ${anySSAccepted&&!anySSPending?`<button class="sbtn ok" data-action="staff-done-selfserve" data-ids="${ssAcceptedIds}">🔒 Mark Done</button>`:""}
           ${anyWaiting?`<button class="sbtn ok" data-action="staff-confirm-upi" data-ids="${waitingIds}">✓ UPI Paid</button>`:""}
           ${anyCashPending?`<button class="sbtn primary" data-action="staff-send-cash-kitchen" data-ids="${cashPendingIds}">🍳 Send to Kitchen</button>`:""}
           ${anyCashSent?`<button class="sbtn ok" data-action="staff-confirm-cash" data-ids="${cashSentIds}">💵 Cash Received</button>`:""}
-          ${allPaid&&!isSS?`<button class="sbtn danger" data-action="staff-close-table" data-ids="${orderIds}">🔒 Close Table</button>`:""}
+          ${allPaid?`<button class="sbtn danger" data-action="staff-close-table" data-ids="${orderIds}">🔒 Close Table</button>`:""}
           <button class="sbtn plain" data-action="print-table-bill" data-ids="${orderIds}">🧾 Bill</button>
         </div>
       </div>`;
@@ -3447,18 +3404,6 @@
           <label>Total Tables in Restaurant</label>
           <input id="set-table-count" type="number" min="1" max="100" value="${r.tableCount || r.tables.length || 4}" placeholder="e.g. 12" style="max-width:160px">
           <p class="muted small" style="margin:4px 0 0">Staff dashboard will display this many tables in the floor plan.</p>
-        </div>
-        <div class="field" style="margin-top:12px">
-          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none">
-            <span style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0">
-              <input type="checkbox" id="set-self-serve" ${r.selfServe ? "checked" : ""} style="opacity:0;width:0;height:0;position:absolute">
-              <span id="set-self-serve-track" style="position:absolute;inset:0;border-radius:12px;background:${r.selfServe ? "#ff6b00" : "#d1d5db"};transition:background .2s;cursor:pointer" onclick="var c=document.getElementById('set-self-serve');c.checked=!c.checked;this.style.background=c.checked?'#ff6b00':'#d1d5db';document.getElementById('set-self-serve-thumb').style.left=c.checked?'22px':'2px'">
-                <span id="set-self-serve-thumb" style="position:absolute;top:2px;left:${r.selfServe ? "22" : "2"}px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.2);transition:left .2s"></span>
-              </span>
-            </span>
-            <span style="font-weight:600">🏪 Self-Service Mode</span>
-          </label>
-          <p class="muted small" style="margin:4px 0 0 54px">Customers scan QR, browse menu, and place order. Billing counter accepts and sends to kitchen. Customer gets an audio alert when order is ready.</p>
         </div>
         ${firebaseMode ? `
           <div class="field">
@@ -3696,7 +3641,8 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     // completed/review screen instead of the live tracking view.
     if (lastOrder && lastOrder.status !== "completed" && lastOrder.status !== "delivered") {
       return customerShell(r.name, customerOrderTrackingView(r, lastOrder));
-    }    if (!customerCat) customerCat = r.categories[0] || unique(r.menu.map(i => i.category))[0] || "";
+    }
+    if (!customerCat) customerCat = r.categories[0] || unique(r.menu.map(i => i.category))[0] || "";
     const searchQuery = (customerSearch || "").trim();
     const searchLower = searchQuery.toLowerCase();
     let items = searchLower
@@ -3713,35 +3659,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     const noResults = items.length === 0 && matchedAddons.length === 0;
     const totalMatches = items.length + matchedAddons.length;
     const total = cartTotal(r);
-
-    if (r.selfServe) {
-      // ── SELF-SERVICE MODE ────────────────────────────────────────────
-      return `
-        <div class="customer-shell">
-          <div class="customer-head">
-            <p>${esc(r.name)}</p>
-            <h1>🏪 Self-Service Ordering</h1>
-            <p style="font-size:12px;color:rgba(255,255,255,.75);margin:4px 0 0">Browse, add to cart and place your order. Pick up at counter when ready!</p>
-          </div>
-          ${lastOrder && (lastOrder.status === "completed" || lastOrder.status === "delivered") ? customerStatusCard(r, lastOrder) : ""}
-          ${customerMenuSearchBar(searchQuery)}
-          ${searchLower
-            ? `<div style="padding:10px 14px 0;font-size:13px;color:var(--muted,#6b7280)">${totalMatches} result${totalMatches === 1 ? "" : "s"} for &ldquo;${esc(searchQuery)}&rdquo;</div>`
-            : `<div class="cat-strip">${unique(r.menu.map(i => i.category)).map(c => `<button class="${c === customerCat ? "active" : ""}" data-action="customer-cat" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>`}
-          <div style="padding-bottom:${(cartCount() || addonCartCount()) ? "160px" : "80px"}">
-            <div style="max-height:420px;overflow-y:auto;-webkit-overflow-scrolling:touch">
-              ${items.map(i => customerItem(r, i)).join("")}
-              ${matchedAddons.length ? `
-                <div style="padding:10px 14px 4px;border-top:1px solid var(--line);margin-top:8px">
-                  <p style="font-size:12px;font-weight:600;color:var(--muted,#6b7280);margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em">Add-ons</p>
-                  ${matchedAddons.map(a => customerAddonItem(a)).join("")}
-                </div>` : ""}
-              ${noResults ? empty(searchLower ? "No items match your search" : "No items available") : ""}
-            </div>
-          </div>
-          ${(cartCount() || addonCartCount()) ? selfServeCheckoutBox(r, total) : ""}
-        </div>`;
-    }
     return `
       <div class="customer-shell">
         <div class="customer-head"><p>${esc(r.name)}</p><h1>Table Ordering</h1></div>
@@ -3880,113 +3797,23 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     </div>`;
   }
 
-  // ── SELF-SERVICE CHECKOUT BOX ────────────────────────────────────────
-  function selfServeCheckoutBox(r, total) {
-    const addonTotal = Object.entries(selectedAddons).reduce((s, [id, qty]) => {
-      const a = find(r.addons, id);
-      return s + (a ? a.price * qty : 0);
-    }, 0);
-    const grand = total + addonTotal;
-    const selectedAddonList = Object.entries(selectedAddons).map(([id, qty]) => { const a = find(r.addons, id); return a ? {...a, qty} : null; }).filter(Boolean);
-
-    return `<div class="cart-bar" style="position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;flex-direction:column;max-height:55vh;box-shadow:0 -4px 24px rgba(0,0,0,0.12);">
-      <div class="cart-scrollable" style="overflow-y:auto;flex:1;min-height:0;padding-bottom:4px">
-        <div class="cart-summary">
-          ${Object.entries(cart).map(([id, qty]) => {
-            const m = find(r.menu, id);
-            return m ? `<div class="cart-row"><span>${esc(m.name)} × ${qty}</span><span>${money(m.price * qty)}</span></div>` : "";
-          }).join("")}
-          ${selectedAddonList.map(a => `<div class="cart-row"><span>+ ${esc(a.name)} × ${a.qty}</span><span>${money(a.price * a.qty)}</span></div>`).join("")}
-          <div class="cart-row cart-total"><span>Total</span><strong>${money(grand)}</strong></div>
-        </div>
-        <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 8px;box-sizing:border-box"></textarea>
-        <div style="background:#fff8e7;border:1.5px solid #f5c969;border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:13px;color:#7a5c1e;display:flex;align-items:center;gap:8px">
-          <span style="font-size:20px">🔔</span>
-          <span>You'll get a <strong>sound alert</strong> on this screen when your order is ready for pickup!</span>
-        </div>
-      </div>
-      <div style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">
-        <button class="btn primary block" data-action="place-order-selfserve" data-slug="${r.slug}">
-          ✓ Place Order · ${money(grand)}
-        </button>
-      </div>
-    </div>`;
-  }
-
-  // ── SELF-SERVICE READY SOUND — cheerful 3-note chime ─────────────────
-  function playReadyChime() {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const notes = [523, 659, 784]; // C5, E5, G5
-      notes.forEach((freq, i) => {
-        const osc = ctx.createOscillator(), gain = ctx.createGain();
-        osc.type = "sine"; osc.frequency.value = freq;
-        const t = ctx.currentTime + i * 0.18;
-        gain.gain.setValueAtTime(0, t);
-        gain.gain.linearRampToValueAtTime(0.45, t + 0.02);
-        gain.gain.linearRampToValueAtTime(0, t + 0.22);
-        osc.connect(gain).connect(ctx.destination);
-        osc.start(t); osc.stop(t + 0.25);
-      });
-      // Repeat once after short pause
-      notes.forEach((freq, i) => {
-        const osc = ctx.createOscillator(), gain = ctx.createGain();
-        osc.type = "sine"; osc.frequency.value = freq;
-        const t = ctx.currentTime + 0.65 + i * 0.18;
-        gain.gain.setValueAtTime(0, t);
-        gain.gain.linearRampToValueAtTime(0.35, t + 0.02);
-        gain.gain.linearRampToValueAtTime(0, t + 0.22);
-        osc.connect(gain).connect(ctx.destination);
-        osc.start(t); osc.stop(t + 0.25);
-      });
-    } catch(e) {}
-  }
-
-  // Track when we last played the ready chime per order to avoid replaying on every render
-  let _selfServeReadyChimePlayed = {};
-
   function customerOrderTrackingView(r, o) {
-    const isSelfServe = !!(r && r.selfServe);
-
-    // Play ready chime on customer's phone when staff marks order ready (self-serve only)
-    if (isSelfServe && o.status === "ready" && !_selfServeReadyChimePlayed[o.id]) {
-      _selfServeReadyChimePlayed[o.id] = true;
-      setTimeout(playReadyChime, 100);
-    }
-
-    const statusSteps = isSelfServe
-      ? ["payment_check", "pending", "preparing", "ready", "completed"]
-      : ["payment_check", "pending", "preparing", "ready", "completed"];
-    const stepLabels = isSelfServe
-      ? ["Order Received", "Confirmed", "Preparing", "🔔 Ready!", "Done"]
-      : ["Payment Check", "Confirmed", "Preparing", "Ready", "Delivered"];
+    const statusSteps = ["payment_check", "pending", "preparing", "ready", "completed"];
+    const stepLabels  = ["Payment Check", "Confirmed", "Preparing", "Ready", "Delivered"];
     const currentStep = statusSteps.indexOf(o.status);
     const statusColor = { payment_check: "#b5790c", pending: "#3e4e7a", preparing: "#8b4513", ready: "#2e7d32", completed: "#2e7d32" };
     const color = statusColor[o.status] || "#3e4e7a";
     const trackColor = "#ead9bd";
     const headerStyle = `background:${color}15;border:1.5px solid ${color};border-radius:12px;padding:16px;margin-bottom:16px`;
     const badgeStyle = `background:${color};color:#fff;padding:5px 12px;border-radius:20px;font-size:13px;font-weight:600`;
-
-    const tokenLabel = isSelfServe
-      ? `Token <strong style="color:${color};font-size:18px">#${o.token || o.id.slice(-4).toUpperCase()}</strong>`
-      : `Table ${o.table}`;
-
-    const readyBanner = (isSelfServe && o.status === "ready") ? `
-      <div style="background:linear-gradient(135deg,#d4edda,#b8e6c1);border:2px solid #27ae60;border-radius:14px;padding:18px;margin-bottom:16px;text-align:center;animation:pulse-green 1.2s infinite">
-        <div style="font-size:40px;margin-bottom:6px">🔔</div>
-        <div style="font-size:20px;font-weight:800;color:#155724">Your order is READY!</div>
-        <div style="font-size:14px;color:#1e7e34;margin-top:4px">Please collect at the counter · Token #${o.token || o.id.slice(-4).toUpperCase()}</div>
-      </div>
-      <style>@keyframes pulse-green{0%,100%{box-shadow:0 0 0 0 rgba(39,174,96,.4)}50%{box-shadow:0 0 0 10px rgba(39,174,96,0)}}</style>` : "";
-
     return `
       <div style="padding:16px 14px">
-        ${readyBanner}
+
         <div style="${headerStyle}">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <div>
               <p style="margin:0;font-size:12px;color:var(--muted,#6b7280);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Order #${o.id.slice(-5).toUpperCase()}</p>
-              <p style="margin:2px 0 0;font-size:13px;color:var(--muted,#6b7280)">${tokenLabel} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
+              <p style="margin:2px 0 0;font-size:13px;color:var(--muted,#6b7280)">Table ${o.table} · ${new Date(o.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
             </div>
             <span style="${badgeStyle}">${stepLabels[Math.max(0, currentStep)] || "Active"}</span>
           </div>
@@ -4365,7 +4192,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (action === "cart-dec") return decCart(el.dataset.id);
     if (action === "place-order") return placeOrder(el.dataset.slug);
     if (action === "place-order-cash") return placeOrderCash(el.dataset.slug);
-    if (action === "place-order-selfserve") return placeOrderSelfServe(el.dataset.slug);
     if (action === "accept-cash") return updateOrder(el.dataset.id, o => { o.paymentStatus = "cash_sent"; o.status = "pending"; });
     if (action === "billing-date-clear") return billingDateFilter = "", render();
     if (action === "cash-received") return updateOrder(el.dataset.id, o => { o.paymentStatus = "cash_accepted"; });
@@ -4593,24 +4419,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       staffSheetTable = null;
       return toast("🔒 Table closed");
     }
-    if (action === "staff-accept-selfserve") {
-      // Billing accepts self-serve order → status pending (sends to kitchen), paymentStatus ss_accepted
-      const ids = el.dataset.ids.split(",").filter(Boolean);
-      mutate(s => ids.forEach(id => {
-        const o = s.orders.find(x => x.id === id);
-        if (o && o.paymentStatus === "ss_pending") { o.paymentStatus = "ss_accepted"; o.status = "pending"; }
-      }));
-      return toast("✅ Order accepted — sent to kitchen");
-    }
-    if (action === "staff-done-selfserve") {
-      // Mark self-serve order fully done (after kitchen marks ready and customer picks up)
-      const ids = el.dataset.ids.split(",").filter(Boolean);
-      mutate(s => ids.forEach(id => {
-        const o = s.orders.find(x => x.id === id);
-        if (o) o.status = "completed";
-      }));
-      return toast("🔒 Order closed");
-    }
     // ── End Staff Dashboard actions ──────────────────────────────────
 
     if (action === "ai-send") {
@@ -4798,7 +4606,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
           if (tc > 0) r.tableCount = tc;
           if (cleanOwnerEmail) r.ownerEmail = cleanOwnerEmail;
           r.masterKeyHash = hash;
-          r.selfServe = document.getElementById("set-self-serve")?.checked || false;
         });
         toast("Settings saved! Master key updated.");
       });
@@ -4814,7 +4621,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         const tc = Number(val("set-table-count"));
         if (tc > 0) r.tableCount = tc;
         if (cleanOwnerEmail) r.ownerEmail = cleanOwnerEmail;
-        r.selfServe = document.getElementById("set-self-serve")?.checked || false;
       });
       toast("Settings saved!");
     }
@@ -4946,54 +4752,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       localStorage.setItem("restoqr_last_order_" + slug, orderId);
       toast("Cash order placed! Counter will accept your payment.");
     }
-
-    cart = {};
-    selectedAddons = {};
-    customerCat = "";
-    customerSearch = "";
-    customerVegFilter = "all";
-    render();
-  }
-
-  // ── SELF-SERVICE ORDER PLACEMENT ─────────────────────────────────────
-  // Generates a short incrementing token number for pickup, no table needed.
-  function nextSelfServeToken(slug) {
-    const key = "restoqr_token_" + slug;
-    const n = (Number(localStorage.getItem(key)) || 0) + 1;
-    localStorage.setItem(key, n % 100 || 1); // cycle 1–99
-    return String(n % 100 || 1);
-  }
-
-  function placeOrderSelfServe(slug) {
-    const r = bySlug(slug);
-    if (!r) return;
-    const pickedAddons = Object.entries(selectedAddons)
-      .map(([id, qty]) => { const a = find(r.addons, id); return a ? { id: a.id, name: a.name, price: a.price, qty } : null; })
-      .filter(Boolean);
-    const newItems = Object.entries(cart).map(([id, qty]) => {
-      const m = find(r.menu, id);
-      return m ? { id, name: m.name, price: m.price, qty } : null;
-    }).filter(Boolean);
-    if (!newItems.length && !pickedAddons.length) return toast("Cart is empty");
-
-    const total = newItems.reduce((s, i) => s + i.price * i.qty, 0) + pickedAddons.reduce((s, a) => s + a.price * a.qty, 0);
-    const orderId = uid();
-    const token = nextSelfServeToken(slug);
-    mutate(s => s.orders.push({
-      id: orderId, restaurantSlug: slug,
-      table: 0,           // no table in self-serve
-      token,              // pickup token shown to customer
-      selfServe: true,
-      items: newItems,
-      addons: pickedAddons,
-      note: val("order-note"),
-      total,
-      paymentStatus: "ss_pending",  // billing counter will accept
-      status: "payment_check",
-      createdAt: Date.now()
-    }));
-    localStorage.setItem("restoqr_last_order_" + slug, orderId);
-    toast("Order placed! Token #" + token + " — counter will confirm.");
 
     cart = {};
     selectedAddons = {};

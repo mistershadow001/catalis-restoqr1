@@ -3364,7 +3364,7 @@
         (o.addons||[]).forEach(a=>{ const e=merged.find(x=>x._aid===a.id); if(e) e.qty+=(a.qty||1); else merged.push({id:"a_"+a.id,_aid:a.id,name:"+ "+a.name,price:a.price,qty:a.qty||1}); });
       });
 
-      const borderColor = allPaid?"#27ae60":anyCashSent?"#2980b9":anyCashPending?"#c4a96a":"#c4a96a";
+      const borderColor = allPaid?"#27ae60":anyCashSent?"#2980b9":"#c4a96a";
       const statusLabel = allPaid?`<span class="spill green">✓ Paid</span>`
         :anyCashSent?`<span class="spill blue">🍳 In Kitchen</span>`
         :anyCashPending?`<span class="spill amber">💵 Cash Pending</span>`
@@ -3460,7 +3460,7 @@
           <p class="muted small" style="margin:6px 0 0">
             ${(r.serviceMode||"served")==="served"
               ? "Waiter brings food to the table. Customer pays before kitchen starts."
-              : "Customer collects at counter. Customer pays at billing before kitchen starts."}
+              : "Customer collects at counter. Customer pays at counter when collecting food."}
           </p>
         </div>
         ${firebaseMode ? `
@@ -3807,6 +3807,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     }, 0);
     const grand = total + addonTotal;
     const selectedAddonList = Object.entries(selectedAddons).map(([id, qty]) => { const a = find(r.addons, id); return a ? {...a, qty} : null; }).filter(Boolean);
+    const isSelfService = r.serviceMode === "self_service";
 
     return `<div class="cart-bar" style="position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;flex-direction:column;max-height:55vh;box-shadow:0 -4px 24px rgba(0,0,0,0.12);">
 
@@ -3822,6 +3823,9 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
 
         <textarea id="order-note" placeholder="Special instructions (optional)" rows="2" style="width:100%;margin:8px 0 8px;box-sizing:border-box"></textarea>
 
+        ${isSelfService ? `
+        <p class="muted small" style="margin-bottom:8px;text-align:center">Pay <strong>${money(grand)}</strong> at the counter when you collect your food.</p>
+        ` : `
         <p class="muted small" style="margin-bottom:8px">
           Pay <strong>${money(grand)}</strong> to <strong>${esc(r.upiName || r.owner)}</strong>
         </p>
@@ -3844,12 +3848,12 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
             style="background:#f5f0e8;border:1.5px solid #c4a96a;color:#7a5c1e;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;padding:13px">
             💵 I'll Pay in Cash at Counter
           </button>
-        </div>
+        </div>`}
       </div>
 
       <div style="flex-shrink:0;padding-top:10px;border-top:1px solid var(--line,#e5e7eb)">
-        <button class="btn primary block" data-action="place-order" data-slug="${r.slug}">
-          ✓ I Paid · Confirm Order
+        <button class="btn primary block" data-action="${isSelfService ? "place-order-cash" : "place-order"}" data-slug="${r.slug}">
+          ${isSelfService ? "✓ Place Order" : "✓ I Paid · Confirm Order"}
         </button>
       </div>
 
@@ -3917,7 +3921,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         </div>
 
         <p style="text-align:center;font-size:13px;color:var(--muted,#6b7280);margin:0 0 16px">
-          ${o.paymentStatus === "cash_pending" ? "💵 Please pay cash at the billing counter. Waiting for counter..." :
+          ${o.paymentStatus === "cash_pending" ? "💵 Please pay cash at the billing counter." :
             o.paymentStatus === "cash_sent" ? "✅ Counter sent your order to kitchen! Please pay cash when served." :
             o.paymentStatus === "cash_accepted" ? "✅ Cash received. Enjoy your meal!" :
             o.paymentStatus === "waiting" ? "⏳ Waiting for payment verification by counter..." :

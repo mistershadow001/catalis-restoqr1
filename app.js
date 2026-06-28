@@ -3451,11 +3451,25 @@
         </div>
         <div class="field">
           <label>Service Mode</label>
-          <select id="set-service-mode" style="max-width:260px">
-            <option value="served" ${(r.serviceMode || "served") === "served" ? "selected" : ""}>🍽 Served — waiter brings food to table</option>
-            <option value="self_service" ${r.serviceMode === "self_service" ? "selected" : ""}>🛎 Self-Service — customer collects at counter</option>
-          </select>
-          <p class="muted small" style="margin:4px 0 0">Self-service: orders go to kitchen after counter confirms. Customer pays at counter when done.</p>
+          <div style="display:inline-flex;border-radius:12px;overflow:hidden;border:2px solid #e8dcc8;background:#faf5ec;margin-top:4px">
+            <button data-action="set-service-mode" data-slug="${r.slug}" data-mode="served"
+              style="padding:10px 20px;font-size:13px;font-weight:700;border:none;cursor:pointer;transition:all .18s;
+              background:${(r.serviceMode||"served")==="served"?"#8b4513":"transparent"};
+              color:${(r.serviceMode||"served")==="served"?"#fff":"#8b4513"};">
+              🍽 Served
+            </button>
+            <button data-action="set-service-mode" data-slug="${r.slug}" data-mode="self_service"
+              style="padding:10px 20px;font-size:13px;font-weight:700;border:none;cursor:pointer;transition:all .18s;
+              background:${r.serviceMode==="self_service"?"#8b4513":"transparent"};
+              color:${r.serviceMode==="self_service"?"#fff":"#8b4513"};">
+              🛎 Self-Service
+            </button>
+          </div>
+          <p class="muted small" style="margin:6px 0 0">
+            ${(r.serviceMode||"served")==="served"
+              ? "Waiter brings food to table. Customer pays before kitchen starts."
+              : "Customer collects at counter. Counter confirms order, customer pays when done."}
+          </p>
         </div>
         ${firebaseMode ? `
           <div class="field">
@@ -4221,6 +4235,9 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
       return;
     }
     if (action === "toggle-active") return updateRestaurant(el.dataset.slug, r => r.active = !r.active);
+    if (action === "set-service-mode") {
+      return updateRestaurant(el.dataset.slug, r => r.serviceMode = el.dataset.mode);
+    }
     if (action === "toggle-qr") return updateRestaurant(el.dataset.slug, r => r.qrEnabled = !r.qrEnabled);
     if (action === "extend-sub") return updateRestaurant(el.dataset.slug, r => { r.active = true; r.qrEnabled = true; r.subscriptionEnds = Math.max(Date.now(), r.subscriptionEnds || 0) + days(30); });
     if (action === "owner-tab") return ownerTab = el.dataset.tab, render();
@@ -4692,7 +4709,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
           const tc = Number(val("set-table-count"));
           if (tc > 0) r.tableCount = tc;
           if (cleanOwnerEmail) r.ownerEmail = cleanOwnerEmail;
-          r.serviceMode = val("set-service-mode") || "served";
           r.masterKeyHash = hash;
         });
         toast("Settings saved! Master key updated.");
@@ -4709,7 +4725,6 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
         const tc = Number(val("set-table-count"));
         if (tc > 0) r.tableCount = tc;
         if (cleanOwnerEmail) r.ownerEmail = cleanOwnerEmail;
-        r.serviceMode = val("set-service-mode") || "served";
       });
       toast("Settings saved!");
     }

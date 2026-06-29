@@ -3693,7 +3693,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     if (!r && firebaseMode && !firebaseDataLoaded) {
       return customerShell("Loading\u2026", `<div class="empty" style="padding:40px 0"><p style="font-size:15px;color:#9a8878">Loading menu, please wait\u2026</p></div>`);
     }
-    if (!r) return customerShell("Restaurant unavailable", `<div class="empty">Restaurant not found.</div>`);
+    if (!r) return customerShell("Restaurant unavailable", `<div class="empty">Loading....</div>`);
     if (!isRestaurantOpen(r)) {
       return customerShell(r.name, `<div class="empty">Ordering is currently unavailable. Please contact the counter.</div>`);
     }
@@ -4158,7 +4158,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     const o = state.orders.find(x => x.id === orderId);
     if (!o) return toast("Order not found");
     const r = bySlug(o.restaurantSlug);
-    if (!r) return toast("Restaurant not found");
+    if (!r) return toast("Loading...");
     let holder = document.getElementById("print-receipt-holder");
     if (!holder) {
       holder = document.createElement("div");
@@ -4175,7 +4175,7 @@ Answer in clear, concise English. Use ₹ for currency. Be direct and helpful. I
     const orders = orderIds.map(id => state.orders.find(x => x.id === id)).filter(Boolean);
     if (!orders.length) return toast("Orders not found");
     const r = bySlug(orders[0].restaurantSlug);
-    if (!r) return toast("Restaurant not found");
+    if (!r) return toast("Loading...");
     let holder = document.getElementById("print-receipt-holder");
     if (!holder) {
       holder = document.createElement("div");
